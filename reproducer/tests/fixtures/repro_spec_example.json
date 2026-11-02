@@ -1,0 +1,48 @@
+{
+  "code_links": ["https://github.com/example-lab/resnet18-cifar10"],
+  "datasets": ["CIFAR-10"],
+  "claims": [
+    {
+      "claim_id": "c1",
+      "metric": "top1_accuracy",
+      "value": 95.3,
+      "unit": "%",
+      "dataset": "CIFAR-10",
+      "split": "test",
+      "setting": "standard augmentation",
+      "location": "Table 1",
+      "quote": "ResNet-18 reaches 95.3% top-1 accuracy on the CIFAR-10 test set."
+    },
+    {
+      "claim_id": "c2",
+      "metric": "top1_accuracy",
+      "value": 93.1,
+      "unit": "%",
+      "dataset": "CIFAR-10",
+      "split": "test",
+      "setting": "no augmentation",
+      "location": "Table 2",
+      "quote": "Without data augmentation, accuracy drops to 93.1%."
+    }
+  ],
+  "setup": [
+    {
+      "name": "optimizer",
+      "value": "SGD",
+      "location": "Section 4.1",
+      "quote": "We train with SGD and momentum 0.9."
+    },
+    {
+      "name": "epochs",
+      "value": "200",
+      "location": "Section 4.1",
+      "quote": "Models are trained for 200 epochs."
+    },
+    {
+      "name": "weight_decay",
+      "value": null,
+      "location": "Section 4.1",
+      "quote": "We use standard weight decay."
+    }
+  ]
+}
