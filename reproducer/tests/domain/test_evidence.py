@@ -113,3 +113,17 @@ def test_dedupe_keeps_first() -> None:
     out = dedupe([first, other, dup])
     assert out == (first, other)
     assert out[0].confidence == "observed"
+
+
+@pytest.mark.parametrize(
+    ("authority", "confidence"),
+    [("repo", "observed"), ("llm", "observed"), ("repo", "inferred")],
+)
+def test_llm_proposal_requires_llm_inferred(authority: str, confidence: str) -> None:
+    with pytest.raises(ValidationError, match="llm_proposal evidence requires"):
+        _ev(kind="llm_proposal", authority=authority, confidence=confidence)
+
+
+def test_llm_proposal_llm_inferred_accepted() -> None:
+    ev = _ev(kind="llm_proposal", authority="llm", confidence="inferred")
+    assert evidence_from_jsonl_line(to_jsonl_line(ev)) == ev

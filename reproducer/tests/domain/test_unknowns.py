@@ -131,6 +131,19 @@ def test_resolve_rejects_inferred_confidence(opened: UnknownOpened) -> None:
         resolve(opened, _repo_ev(confidence="inferred"), "5e-4")
 
 
+def test_resolve_rejects_llm_proposal(opened: UnknownOpened) -> None:
+    proposal = make_evidence(
+        kind="llm_proposal",
+        source="llm:proposal",
+        locator="weight_decay",
+        content={"name": "weight_decay", "value": "5e-4"},
+        confidence="inferred",
+        authority="llm",
+    )
+    with pytest.raises(ValueError, match="llm_proposal cannot resolve an unknown"):
+        resolve(opened, proposal, "5e-4")
+
+
 # --- fold ----------------------------------------------------------------------------------
 
 
@@ -218,6 +231,24 @@ def test_fold_rechecks_resolution_policy(opened: UnknownOpened, index: dict[str,
     )
     with pytest.raises(ValueError, match="confidence|authority"):
         fold_unknowns([opened, forged], index)
+
+
+def test_fold_rejects_llm_proposal_resolution(
+    opened: UnknownOpened, index: dict[str, Evidence]
+) -> None:
+    proposal = make_evidence(
+        kind="llm_proposal",
+        source="llm:proposal",
+        locator="weight_decay",
+        content={"name": "weight_decay", "value": "1e-4"},
+        confidence="inferred",
+        authority="llm",
+    )
+    forged = UnknownResolved(
+        unknown_id=opened.unknown_id, value="1e-4", evidence_id=proposal.evidence_id
+    )
+    with pytest.raises(ValueError, match="llm_proposal cannot resolve an unknown"):
+        fold_unknowns([opened, forged], {**index, proposal.evidence_id: proposal})
 
 
 def test_fold_reopen(opened: UnknownOpened, index: dict[str, Evidence]) -> None:

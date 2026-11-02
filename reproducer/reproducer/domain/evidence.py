@@ -26,6 +26,7 @@ EvidenceKind = Literal[
     "critic_patch",
     "lesson",
     "human_input",
+    "llm_proposal",
 ]
 Confidence = Literal["observed", "derived", "inferred"]
 Authority = Literal["paper", "repo", "execution", "llm", "human"]
@@ -67,6 +68,17 @@ class Evidence(_Frozen):
         if self.evidence_id != expected:
             raise ValueError(
                 f"evidence_id mismatch: got {self.evidence_id!r}, expected {expected!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_llm_proposal(self) -> Self:
+        if self.kind == "llm_proposal" and (
+            self.authority != "llm" or self.confidence != "inferred"
+        ):
+            raise ValueError(
+                "llm_proposal evidence requires authority='llm' and confidence='inferred', "
+                f"got authority={self.authority!r}, confidence={self.confidence!r}"
             )
         return self
 

@@ -81,6 +81,8 @@ def event_from_jsonl_line(line: str) -> UnknownOpened | UnknownResolved | Assump
 
 
 def _check_resolving_evidence(evidence: Evidence) -> None:
+    if evidence.kind == "llm_proposal":
+        raise ValueError(f"evidence {evidence.evidence_id}: llm_proposal cannot resolve an unknown")
     if evidence.confidence not in RESOLVING_CONFIDENCE:
         raise ValueError(
             f"evidence {evidence.evidence_id} has confidence {evidence.confidence!r}; "
