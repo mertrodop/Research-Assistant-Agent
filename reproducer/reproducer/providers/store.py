@@ -3,6 +3,7 @@
 One folder per paper holding:
   evidence.jsonl        one canonical Evidence per line, deduplicated by evidence_id on write
   unknown_events.jsonl  one UnknownOpened / UnknownResolved / Assumption per line, in order
+  llm_calls.jsonl       one LLM CallRecord per line (telemetry, not evidence; no dedupe)
 
 Files are never rewritten or truncated; there is no update/delete API. The ledger is not
 stored: it is always recomputed from these two files.
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import BinaryIO, TypeVar
 
 from reproducer.domain.evidence import Evidence, evidence_from_jsonl_line, to_jsonl_line
+from reproducer.domain.telemetry import CallRecord
 from reproducer.domain.unknowns import (
     Assumption,
     UnknownOpened,
@@ -33,6 +35,7 @@ from reproducer.domain.unknowns import (
 
 EVIDENCE_FILE = "evidence.jsonl"
 EVENTS_FILE = "unknown_events.jsonl"
+LLM_CALLS_FILE = "llm_calls.jsonl"  # telemetry (CallRecord), not evidence; no dedupe
 
 UnknownEventT = UnknownOpened | UnknownResolved | Assumption
 T = TypeVar("T")
@@ -92,7 +95,8 @@ class RunStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self.evidence_path = self.root / EVIDENCE_FILE
         self.events_path = self.root / EVENTS_FILE
-        for p in (self.evidence_path, self.events_path):
+        self.llm_calls_path = self.root / LLM_CALLS_FILE
+        for p in (self.evidence_path, self.events_path, self.llm_calls_path):
             open(p, "ab").close()  # create if missing; never truncates
 
         self._lock = threading.Lock()
@@ -129,6 +133,13 @@ class RunStore:
             _check_tail(f, self.events_path, os.fstat(f.fileno()).st_size)
             _write_durable(f, data)
 
+    def append_call_record(self, record: CallRecord) -> None:
+        """Append one LLM CallRecord (telemetry; prompt is stored only as its sha256)."""
+        data = (to_jsonl_line(record) + "\n").encode("utf-8")
+        with open(self.llm_calls_path, "a+b") as f, _flocked(f, fcntl.LOCK_EX):
+            _check_tail(f, self.llm_calls_path, os.fstat(f.fileno()).st_size)
+            _write_durable(f, data)
+
     # --- reads ---------------------------------------------------------------------------
 
     def load_evidence(self) -> dict[str, Evidence]:
@@ -144,6 +155,15 @@ class RunStore:
     def load_events(self) -> tuple[UnknownEventT, ...]:
         return tuple(
             _parse_lines(self.events_path, _read_locked(self.events_path), event_from_jsonl_line)
+        )
+
+    def load_call_records(self) -> tuple[CallRecord, ...]:
+        return tuple(
+            _parse_lines(
+                self.llm_calls_path,
+                _read_locked(self.llm_calls_path),
+                CallRecord.model_validate_json,
+            )
         )
 
     # --- internals -----------------------------------------------------------------------

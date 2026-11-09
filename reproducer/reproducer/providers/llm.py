@@ -31,6 +31,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
+from reproducer.domain.telemetry import CallRecord
+
 BACKENDS = ("ollama", "openai", "fake")
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -429,18 +431,6 @@ class Budget:
             self._reserved -= reserved
 
 
-class CallRecord(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    node: str
-    backend: str
-    model: str
-    input_tokens: int
-    output_tokens: int
-    latency_s: float
-    prompt_sha256: str
-
-
 def prompt_sha256(system: str, prompt: str) -> str:
     return hashlib.sha256(f"{system}\x00{prompt}".encode()).hexdigest()
 
@@ -448,10 +438,17 @@ def prompt_sha256(system: str, prompt: str) -> str:
 class MeteredLLM:
     """Wraps an LLM: enforces the Budget and records one CallRecord per successful call."""
 
-    def __init__(self, inner: LLM, budget: Budget, node: str) -> None:
+    def __init__(
+        self,
+        inner: LLM,
+        budget: Budget,
+        node: str,
+        on_record: Callable[[CallRecord], None] | None = None,
+    ) -> None:
         self.inner = inner
         self.budget = budget
         self.node = node
+        self.on_record = on_record  # e.g. RunStore.append_call_record; errors propagate
         self._records: list[CallRecord] = []
         self._lock = threading.Lock()
 
@@ -486,6 +483,8 @@ class MeteredLLM:
         )
         with self._lock:
             self._records.append(record)
+        if self.on_record is not None:
+            self.on_record(record)
         return resp
 
     def records(self) -> tuple[CallRecord, ...]:

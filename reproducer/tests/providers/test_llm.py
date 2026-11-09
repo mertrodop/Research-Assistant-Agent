@@ -651,3 +651,19 @@ def test_live_openai_api_schema() -> None:
     client = OpenAICompatLLM(base_url, model)
     resp = client.complete(LIVE_SYSTEM, LIVE_PROMPT, max_tokens=64, json_schema=SCHEMA)
     _check_schema_json(resp, "openai-api")
+
+
+def test_metered_on_record_callback() -> None:
+    seen: list[Any] = []
+    m = MeteredLLM(FakeLLM(["a", "b"]), Budget(), "n", on_record=seen.append)
+    m.complete("s", "p", max_tokens=5)
+    m.complete("s", "q", max_tokens=5)
+    assert tuple(seen) == m.records()
+
+
+def test_metered_on_record_not_called_on_failure() -> None:
+    seen: list[Any] = []
+    m = MeteredLLM(FakeLLM([]), Budget(), "n", on_record=seen.append)
+    with pytest.raises(LLMError):
+        m.complete("s", "p", max_tokens=5)
+    assert seen == [] and m.records() == ()

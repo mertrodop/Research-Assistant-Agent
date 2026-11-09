@@ -10,7 +10,8 @@ import pytest
 
 from reproducer.domain.evidence import Evidence, make_evidence
 from reproducer.domain.unknowns import Assumption, UnknownOpened, unknown_id_for
-from reproducer.providers.store import EVENTS_FILE, EVIDENCE_FILE, RunStore
+from reproducer.providers.llm import Budget, FakeLLM, MeteredLLM, prompt_sha256
+from reproducer.providers.store import EVENTS_FILE, EVIDENCE_FILE, LLM_CALLS_FILE, RunStore
 
 
 def _ev(i: int, source: str = "repo@abc") -> Evidence:
@@ -171,3 +172,43 @@ def test_concurrent_appends(tmp_path: Path, shared: bool) -> None:
     assert len(loaded) == n_threads * n_records + 1
     assert _line_count(shared_store.evidence_path) == n_threads * n_records + 1
     assert len(shared_store.load_events()) == n_threads * n_records
+
+
+# --------------------------------------------------------------------------- LLM telemetry
+
+
+def test_call_records_from_metered_llm_roundtrip(tmp_path: Path) -> None:
+    store = RunStore(tmp_path)
+    assert (tmp_path / LLM_CALLS_FILE).is_file()
+    secret_prompt = "unique-secret-prompt-text-42"
+    llm = MeteredLLM(
+        FakeLLM(["a b", "c", "c"]), Budget(), "subtasks", on_record=store.append_call_record
+    )
+    llm.complete("sys", secret_prompt, max_tokens=10)
+    llm.complete("sys", "other", max_tokens=10)
+    llm.complete("sys", "other", max_tokens=10)  # identical record: no dedupe for telemetry
+
+    assert store.load_call_records() == llm.records()
+    assert RunStore(tmp_path).load_call_records() == llm.records()  # survives restart
+    assert _line_count(tmp_path / LLM_CALLS_FILE) == 3
+    raw = (tmp_path / LLM_CALLS_FILE).read_text()
+    assert secret_prompt not in raw
+    assert prompt_sha256("sys", secret_prompt) in raw
+    assert _line_count(tmp_path / EVIDENCE_FILE) == 0  # telemetry is not evidence
+
+
+def test_call_record_refuses_append_after_torn_tail(tmp_path: Path) -> None:
+    store = RunStore(tmp_path)
+    with open(tmp_path / LLM_CALLS_FILE, "a") as f:
+        f.write('{"node":')  # simulated torn write
+    llm = MeteredLLM(FakeLLM(["x"]), Budget(), "n", on_record=store.append_call_record)
+    with pytest.raises(ValueError, match="torn"):
+        llm.complete("s", "p", max_tokens=5)
+    assert (tmp_path / LLM_CALLS_FILE).read_text() == '{"node":'
+
+
+def test_corrupt_call_record_line_raises_with_line_number(tmp_path: Path) -> None:
+    store = RunStore(tmp_path)
+    (tmp_path / LLM_CALLS_FILE).write_text('{"node": "x"}\n')
+    with pytest.raises(ValueError, match=r"llm_calls.jsonl:1"):
+        store.load_call_records()
