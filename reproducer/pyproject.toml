@@ -24,3 +24,8 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "network: needs internet access (deselected by default)",
+    "llm_live: calls a real LLM backend, e.g. local Ollama (deselected by default)",
+]
+addopts = "-m 'not network and not llm_live'"
