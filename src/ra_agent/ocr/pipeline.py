@@ -7,8 +7,10 @@ from pathlib import Path
 
 from ..config import Settings
 from ..schema import CheckResult, FigureRef, OcrDocument, PageResult, Route, Severity
-from ..llm.client import VisionClient
+from ..llm.client import LlmClient
 from .assemble import assemble
+from .critic import critique_page
+from .crossref import CrossrefClient, ReferenceCheck, check_references
 from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engine
 from .figures import extract_figures
 from .interpret import interpret_figures
@@ -58,7 +60,7 @@ class OcrPipeline:
         settings: Settings | None = None,
         engine: OcrEngine | None = None,
         cache: PageCache | None = None,
-        vision: VisionClient | None = None,
+        vision: LlmClient | None = None,
     ) -> None:
         self.settings = settings or Settings()
         self.engine = engine or build_engine(self.settings.engine)
@@ -116,6 +118,18 @@ class OcrPipeline:
                 ),
             )
         failed = has_blockers(checks)
+        if (
+            not failed
+            and self.settings.critic.enabled
+            and self.vision is not None
+            and markdown.strip()
+        ):
+            checks.append(
+                critique_page(
+                    markdown, self.vision, self.settings.critic, stats.page_no
+                )
+            )
+            failed = has_blockers(checks)
         if cached is None and not failed:
             self.cache.put(sha, stats.page_no, route, dpi, markdown, doctags)
 
@@ -204,6 +218,9 @@ class OcrPipeline:
                     )
                 ordered = checked
         markdown = assemble(ordered, figures)
+        references: list[ReferenceCheck] = []
+        if self.settings.crossref.enabled:
+            references = check_references(markdown, self._crossref_client())
         status = (
             "verified"
             if all(page.status == "verified" for page in ordered)
@@ -216,6 +233,17 @@ class OcrPipeline:
             pages=ordered,
             markdown=markdown,
             status=status,
+            references=references,
+        )
+
+    def _crossref_client(self) -> CrossrefClient:
+        config = self.settings.crossref
+        return CrossrefClient(
+            cache_dir=config.cache_dir,
+            timeout_s=config.timeout_s,
+            mailto=config.mailto,
+            min_score=config.min_score,
+            year_tolerance=config.year_tolerance,
         )
 
     def _interpret_figures(

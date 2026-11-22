@@ -73,6 +73,23 @@ class VisionSettings(BaseModel):
     max_image_side: int = 1400
 
 
+class CriticSettings(BaseModel):
+    """Tier 2 rubric critic. Off by default: it needs an LLM endpoint."""
+
+    enabled: bool = False
+    min_dimension: int = 3
+    min_average: float = 3.5
+
+
+class CrossrefSettings(BaseModel):
+    enabled: bool = False
+    cache_dir: str = ".cache/crossref"
+    timeout_s: float = 20.0
+    mailto: str = ""
+    min_score: float = 0.82
+    year_tolerance: int = 1
+
+
 class Settings(BaseModel):
     render: RenderSettings = Field(default_factory=RenderSettings)
     router: RouterSettings = Field(default_factory=RouterSettings)
@@ -82,6 +99,8 @@ class Settings(BaseModel):
     data: DataSettings = Field(default_factory=DataSettings)
     figures: FigureSettings = Field(default_factory=FigureSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
+    critic: CriticSettings = Field(default_factory=CriticSettings)
+    crossref: CrossrefSettings = Field(default_factory=CrossrefSettings)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Settings":

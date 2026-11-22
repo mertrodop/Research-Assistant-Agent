@@ -12,13 +12,15 @@ from ..config import VisionSettings
 
 
 class VisionError(RuntimeError):
-    """Raised when the vision endpoint cannot answer."""
+    """Raised when the model endpoint cannot answer."""
 
 
-class VisionClient(Protocol):
+class LlmClient(Protocol):
     model: str
 
     def describe(self, image_path: str | Path, prompt: str) -> str: ...
+
+    def complete(self, prompt: str) -> str: ...
 
 
 class NullVisionClient:
@@ -28,6 +30,9 @@ class NullVisionClient:
 
     def describe(self, image_path: str | Path, prompt: str) -> str:
         raise VisionError("vision client disabled")
+
+    def complete(self, prompt: str) -> str:
+        raise VisionError("llm client disabled")
 
 
 def _data_uri(image_path: Path) -> str:
@@ -49,7 +54,7 @@ class OpenAICompatibleVisionClient:
             settings.api_key_env, ""
         )
 
-    def describe(self, image_path: str | Path, prompt: str) -> str:
+    def _post(self, content: list[dict] | str) -> str:
         if not self._api_key:
             raise VisionError(
                 f"missing API key: set {self.settings.api_key_env} in the environment or .env"
@@ -58,18 +63,7 @@ class OpenAICompatibleVisionClient:
             "model": self.model,
             "temperature": self.settings.temperature,
             "max_tokens": self.settings.max_tokens,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": _data_uri(Path(image_path))},
-                        },
-                    ],
-                }
-            ],
+            "messages": [{"role": "user", "content": content}],
         }
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -96,8 +90,22 @@ class OpenAICompatibleVisionClient:
         except (KeyError, IndexError, TypeError) as exc:
             raise VisionError(f"unexpected response shape: {str(payload)[:200]}") from exc
 
+    def describe(self, image_path: str | Path, prompt: str) -> str:
+        return self._post(
+            [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": _data_uri(Path(image_path))},
+                },
+            ]
+        )
 
-def build_vision_client(settings: VisionSettings) -> VisionClient:
+    def complete(self, prompt: str) -> str:
+        return self._post(prompt)
+
+
+def build_vision_client(settings: VisionSettings) -> LlmClient:
     if not settings.enabled:
         return NullVisionClient()
     return OpenAICompatibleVisionClient(settings)

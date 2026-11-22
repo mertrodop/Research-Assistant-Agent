@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..config import VisionSettings
-from ..llm.client import VisionClient, VisionError
+from ..llm.client import LlmClient, VisionError
 from ..schema import FigureInterpretation, FigureRef
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
@@ -108,7 +108,7 @@ def interpret_figure(
     figure: FigureRef,
     image_path: str | Path,
     page_text: str,
-    client: VisionClient,
+    client: LlmClient,
     settings: VisionSettings,
 ) -> FigureInterpretation:
     prompt = PROMPT.format(
@@ -164,7 +164,7 @@ def interpret_figures(
     figures: list[FigureRef],
     image_dir: str | Path,
     page_texts: dict[int, str],
-    client: VisionClient,
+    client: LlmClient,
     settings: VisionSettings,
     sha: str = "",
 ) -> list[FigureRef]:

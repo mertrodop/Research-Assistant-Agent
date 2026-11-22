@@ -67,7 +67,9 @@ düzeni için `--vault` kullanılır: `vault/Resources/Parsed/<sha12>.md`.
 | Birleştirme | `ocr/assemble.py` | kod: tekrar eden header/footer, sözlük destekli tire kırılması |
 | Figürler | `ocr/figures.py` | kod: raster çıkarımı, caption eşleme, vektör için sayfa render'ı |
 | Figür yorumu | `ocr/interpret.py` + `llm/client.py` | LLM önerir, kod doğrular (grounded critic) |
-| Tier 1 gate | `ocr/gate.py` | kod: 10 deterministik kontrol |
+| Tier 1 gate | `ocr/gate.py` | kod: 11 deterministik kontrol |
+| Kaynakça | `ocr/crossref.py` | kod: Crossref + başlık benzerliği |
+| Tier 2 critic | `ocr/critic.py` | LLM puanlar, kod eşikle karar verir |
 | Retry / circuit breaker | `ocr/pipeline.py` | kod: DPI merdiveni, ≤ 3 deneme |
 | Not | `vault/note.py` | kod |
 
@@ -165,6 +167,27 @@ sürümü gerekir.
 vllm serve ibm-granite/granite-vision-3.1-2b --guided-json --seed 42
 ra-ocr batch --figures-llm --vision-model ibm-granite/granite-vision-3.1-2b \
              --vision-base-url http://localhost:8000/v1
+```
+
+## Tier 2: rubric critic ve Crossref
+
+Tier 1 geçen sayfa, `--critic` verilirse bir rubrik eleştirmenine gider. Dört boyut 1–5
+puanlanır (`fidelity`, `completeness`, `structure`, `no_hallucination`); en düşük boyut
+`min_dimension` altındaysa veya ortalama `min_average` altındaysa sayfa `needs-review`
+olur ve DPI merdiveniyle yeniden denenir. Critic erişilemezse `warn` düşer, hat çökmez.
+
+`--crossref` verilirse kaynakça girdileri `api.crossref.org` üzerinde aranır. Başlık
+benzerliği `min_score` üstünde ve yıl `year_tolerance` içindeyse `verified`; aksi halde
+`mismatch` veya `unresolved`. Sonuçlar notta `## References check` tablosuna yazılır ve
+`.cache/crossref` altında saklanır, böylece tekrar çalıştırma ağa çıkmaz.
+
+OCR kaynakçayı boş satırlarla ayırmadığı için girdi sınırları "Soyad, A." ve "Kurum."
+kalıplarıyla bulunur. Başlık ayrıştırılamayan girdiler `skipped` olarak işaretlenir;
+yanlış bir `mismatch` üretmek yerine açıkça "başlık bulunamadı" denir.
+
+```bash
+ra-ocr batch --critic --crossref
+ra-ocr ingest paper.pdf --critic --crossref --json
 ```
 
 ## Ayarlar

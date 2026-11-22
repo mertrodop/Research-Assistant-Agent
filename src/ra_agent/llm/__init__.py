@@ -1,13 +1,13 @@
 from .client import (
+    LlmClient,
     NullVisionClient,
     OpenAICompatibleVisionClient,
-    VisionClient,
     VisionError,
     build_vision_client,
 )
 
 __all__ = [
-    "VisionClient",
+    "LlmClient",
     "VisionError",
     "NullVisionClient",
     "OpenAICompatibleVisionClient",

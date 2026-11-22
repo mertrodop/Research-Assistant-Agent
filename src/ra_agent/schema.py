@@ -86,6 +86,21 @@ class PageResult(BaseModel):
         return [c for c in self.checks if not c.passed and c.severity is Severity.WARN]
 
 
+class Reference(BaseModel):
+    raw: str
+    title: str = ""
+    year: str = ""
+
+
+class ReferenceCheck(BaseModel):
+    reference: Reference
+    status: str = "skipped"  # verified | mismatch | unresolved | skipped
+    matched_title: str = ""
+    matched_year: str = ""
+    score: float = 0.0
+    detail: str = ""
+
+
 class OcrDocument(BaseModel):
     source_pdf: str
     sha256: str
@@ -94,10 +109,15 @@ class OcrDocument(BaseModel):
     markdown: str = ""
     status: Literal["verified", "needs-review"] = "verified"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    references: list[ReferenceCheck] = Field(default_factory=list)
 
     @property
     def review_pages(self) -> list[int]:
         return [p.page_no for p in self.pages if p.status == "needs-review"]
+
+    @property
+    def unresolved_references(self) -> list[ReferenceCheck]:
+        return [ref for ref in self.references if ref.status in {"mismatch", "unresolved"}]
 
 
 class NoteFrontmatter(BaseModel):
