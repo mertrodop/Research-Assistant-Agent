@@ -90,6 +90,14 @@ class CrossrefSettings(BaseModel):
     year_tolerance: int = 1
 
 
+class ReferenceSettings(BaseModel):
+    """Agentic reference resolution: strategy ladder plus circuit breaker."""
+
+    max_attempts: int = 4
+    use_llm: bool = False
+    mismatch_floor: float = 0.5
+
+
 class Settings(BaseModel):
     render: RenderSettings = Field(default_factory=RenderSettings)
     router: RouterSettings = Field(default_factory=RouterSettings)
@@ -101,6 +109,7 @@ class Settings(BaseModel):
     vision: VisionSettings = Field(default_factory=VisionSettings)
     critic: CriticSettings = Field(default_factory=CriticSettings)
     crossref: CrossrefSettings = Field(default_factory=CrossrefSettings)
+    references: ReferenceSettings = Field(default_factory=ReferenceSettings)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Settings":

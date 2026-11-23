@@ -165,35 +165,45 @@ class CrossrefClient:
         cache.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
         return items
 
-    def check(self, reference: Reference) -> ReferenceCheck:
-        if not reference.title or len(reference.title) < 12:
-            return ReferenceCheck(reference=reference, status="skipped", detail="title too short")
-        if _looks_like_authors(reference.title):
-            return ReferenceCheck(
-                reference=reference,
-                status="skipped",
-                detail="could not isolate a title from the author list",
+    def search(self, query: str) -> list[dict]:
+        """Bibliographic search. Kept separate so tests can stub the network."""
+        return self._fetch(query)
+
+    def lookup_doi(self, doi: str) -> dict | None:
+        """Direct DOI lookup, the most reliable strategy when a DOI is present."""
+        slug = re.sub(r"[^a-z0-9]+", "-", doi.lower())[:90].strip("-")
+        cache = self.cache_dir / f"doi-{slug}.json"
+        if cache.is_file():
+            try:
+                return json.loads(cache.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                pass
+        params = {"mailto": self.mailto} if self.mailto else {}
+        try:
+            response = httpx.get(
+                f"{API}/{doi}", params=params, timeout=self.timeout_s
             )
-        items = self._fetch(reference.title[:220])
-        if not items:
-            return ReferenceCheck(reference=reference, status="unresolved", detail="no crossref hit")
+            response.raise_for_status()
+            item = response.json().get("message", {})
+        except (httpx.HTTPError, json.JSONDecodeError, KeyError):
+            return None
+        if not item:
+            return None
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(item, ensure_ascii=False), encoding="utf-8")
+        return item
 
-        best: tuple[float, dict] | None = None
-        for item in items:
-            titles = item.get("title") or []
-            candidate = titles[0] if titles else ""
-            if not candidate:
-                continue
-            score = fuzz.token_set_ratio(reference.title.lower(), candidate.lower()) / 100
-            if best is None or score > best[0]:
-                best = (score, item)
-        if best is None:
-            return ReferenceCheck(reference=reference, status="unresolved", detail="no title in hits")
+    def score_title(self, reference_title: str, candidate: str) -> float:
+        return fuzz.token_set_ratio(reference_title.lower(), candidate.lower()) / 100
 
-        score, item = best
+    def evaluate(
+        self, reference: Reference, item: dict
+    ) -> ReferenceCheck:
+        """Score one Crossref record against a reference and decide its status."""
         matched_title = (item.get("title") or [""])[0]
         parts = item.get("issued", {}).get("date-parts") or [[None]]
         matched_year = str(parts[0][0]) if parts and parts[0] and parts[0][0] else ""
+        score = self.score_title(reference.title, matched_title) if matched_title else 0.0
 
         if score < self.min_score:
             return ReferenceCheck(
@@ -222,6 +232,32 @@ class CrossrefClient:
             matched_year=matched_year,
             score=round(score, 3),
         )
+
+    def check(self, reference: Reference) -> ReferenceCheck:
+        if not reference.title or len(reference.title) < 12:
+            return ReferenceCheck(reference=reference, status="skipped", detail="title too short")
+        if _looks_like_authors(reference.title):
+            return ReferenceCheck(
+                reference=reference,
+                status="skipped",
+                detail="could not isolate a title from the author list",
+            )
+        items = self.search(reference.title[:220])
+        if not items:
+            return ReferenceCheck(reference=reference, status="unresolved", detail="no crossref hit")
+
+        best: tuple[float, dict] | None = None
+        for item in items:
+            titles = item.get("title") or []
+            candidate = titles[0] if titles else ""
+            if not candidate:
+                continue
+            score = self.score_title(reference.title, candidate)
+            if best is None or score > best[0]:
+                best = (score, item)
+        if best is None:
+            return ReferenceCheck(reference=reference, status="unresolved", detail="no title in hits")
+        return self.evaluate(reference, best[1])
 
 
 def check_references(

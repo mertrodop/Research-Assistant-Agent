@@ -99,6 +99,8 @@ class ReferenceCheck(BaseModel):
     matched_year: str = ""
     score: float = 0.0
     detail: str = ""
+    strategy: str = ""
+    attempts: list[str] = Field(default_factory=list)
 
 
 class OcrDocument(BaseModel):

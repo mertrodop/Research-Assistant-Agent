@@ -7,7 +7,7 @@ ocr_engine: native_text
 pages: 30
 verified_pages: 30
 status: verified
-created_at: '2026-11-22T18:31:32+00:00'
+created_at: '2026-11-23T10:51:08+00:00'
 tags:
 - ocr
 - verified
@@ -2986,23 +2986,24 @@ to modify the codebase during the reproduction process.
 
 ## References check
 
-| status | score | reference | matched |
-|---|---|---|---|
-| mismatch | 0.36 | AISI. Inspect, 2024. URL https://inspect.ai-safety-institute.org.uk. Rose L. Andrew, Arianne Y.K. Albert, Sebastien Rena | Título da Página Eletrónica: Institute for Palestine Studies |
-| skipped | 0.00 | Vines. Assessing the reproducibility of discriminant function analyses. PeerJ, 3:e1137, August 2015. ISSN 2167-8359. doi | could not isolate a title from the author list |
-| unresolved | 0.00 | Matteo Brivio and Çağrı Çöltekin. [Re] Exploring the Representation of Word Meanings in Context. ReScience C, 9(2):#5, J | no crossref hit |
-| mismatch | 0.71 | Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V. Le, Christopher Ré, and Azalia | Le Brun, Christopher |
-| unresolved | 0.00 | Mirhoseini. Large Language Monkeys: Scaling Inference Compute with Repeated Sampling, July 2024. URL http://arxiv.org/ab | no crossref hit |
-| unresolved | 0.00 | Psychology. Meta-Psychology, 3, November 2019. ISSN 2003-2714. doi: 10.15626/MP.2018.892. URL https://open.lnu.se/index. | no crossref hit |
-| unresolved | 0.00 | Christian Collberg and Todd A. Proebsting. Repeatability in computer systems research. Communications of the ACM, 59(3): | no crossref hit |
-| verified | 0.99 | Tom E. Hardwicke, Manuel Bohn, Kyle MacDonald, Emily Hembacher, Michèle B. Nuijten, Benjamin N. Peloquin, Benjamin E. de | Analytic reproducibility in articles receiving open data badges at the journal P |
-| mismatch | 1.00 | Sayash Kapoor and Arvind Narayanan. Evaluating LLMs is a minefield, October 2023. URL https: //www.aisnakeoil.com/p/eval | Successes and Struggles with Computational Reproducibility: Lessons from the Fra |
-| verified | 1.00 | Victor Livernoche and Vidya Sujaya. [Re] A Reproduction of Automatic Multi-Label Prompting: Simple and Interpretable Few | Automatic Multi-Label Prompting: Simple and Interpretable Few-Shot Classificatio |
-| verified | 1.00 | Chris Lu, Cong Lu, Robert Tjarko Lange, Jakob Foerster, Jeff Clune, and David Ha. The AI Scientist: Towards Fully Automa | OpenEQA: Embodied Question Answering in the Era of Foundation Models |
-| mismatch | 0.93 | METR. Vivaria, 2024. URL https://vivaria.metr.org. Florian Naudet, Charlotte Sakarovitch, Perrine Janiaud, Ioana Cristea | Data sharing and reanalysis of randomized controlled trials in leading biomedica |
-| verified | 1.00 | Sheeba Samuel and Daniel Mietchen. Computational reproducibility of Jupyter notebooks from biomedical publications. Giga | Computational reproducibility of Jupyter notebooks from biomedical publications |
-| mismatch | 1.00 | AutoGPT. original-date: 2023-03-16T09:21:07Z. Koustuv Sinha, Maurits Bleeker, Samarth Bhargav, Jessica Zosa Forde, Shara | Prediction Interval: What to Expect When You’re Expecting … A Replication |
-| mismatch | 1.00 | Replication. PLOS ONE, 11(9):e0162874, September 2016. ISSN 1932-6203. doi: 10.1371/journal.pone. 0162874. URL https://j | Push button replication: Is impact evaluation evidence for international develop |
-| mismatch | 0.48 | Press. SWE-AGENT: Agent-Computer Interfaces Enable Automated Software Engineering. 2024. URL https://swe-agent.com/paper | Beyond Algorithmic Tasks: Do Benchmarks Overestimate LLM Capability for Real-Wor |
-| unresolved | 0.00 | A Benchmark Details A.1 Original CodeOcean Dataset To obtain a dataset of all 5,090 capsules on CodeOcean and their corr | no crossref hit |
-| skipped | 0.00 | CORE-Bench. We provide an example of a capsule’s run file that satisfies criteria six (Listing 1) and an example of the  | could not isolate a title from the author list |
+| status | score | strategy | reference | matched |
+|---|---|---|---|---|
+| unresolved | 0.00 | exhausted | AISI. Inspect, 2024. URL https://inspect.ai-safety-institute.org.uk. Rose L. Andrew, Arianne Y.K. Albert, Sebastien Rena | no strategy produced a verified match |
+| mismatch | 0.97 | exhausted | Vines. Assessing the reproducibility of discriminant function analyses. PeerJ, 3:e1137, August 2015. ISSN 2167-8359. doi | Proceedings of the 16th Conference of the European Chapter of the Association fo |
+| mismatch | 0.88 | exhausted | Matteo Brivio and Çağrı Çöltekin. [Re] Exploring the Representation of Word Meanings in Context. ReScience C, 9(2):#5, J | Exploring the Representation of Word Meanings in Context: A Case Study on Homony |
+| mismatch | 0.71 | exhausted | Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V. Le, Christopher Ré, and Azalia | Le Brun, Christopher |
+| mismatch | 0.63 | exhausted | Mirhoseini. Large Language Monkeys: Scaling Inference Compute with Repeated Sampling, July 2024. URL http://arxiv.org/ab | Enhancing Compute-Optimal Inference for Problem-Solving with Optimized Large Lan |
+| unresolved | 0.00 | exhausted | Psychology. Meta-Psychology, 3, November 2019. ISSN 2003-2714. doi: 10.15626/MP.2018.892. URL https://open.lnu.se/index. | no strategy produced a verified match |
+| mismatch | 0.96 | exhausted | Christian Collberg and Todd A. Proebsting. Repeatability in computer systems research. Communications of the ACM, 59(3): | Recommendations for utilizing and reporting population genetic analyses: the rep |
+| verified | 0.97 | doi | Tom E. Hardwicke, Manuel Bohn, Kyle MacDonald, Emily Hembacher, Michèle B. Nuijten, Benjamin N. Peloquin, Benjamin E. de | Analytic reproducibility in articles receiving open data badges at the journal
+  |
+| mismatch | 1.00 | exhausted | Sayash Kapoor and Arvind Narayanan. Evaluating LLMs is a minefield, October 2023. URL https: //www.aisnakeoil.com/p/eval | Successes and Struggles with Computational Reproducibility: Lessons from the Fra |
+| verified | 1.00 | title | Victor Livernoche and Vidya Sujaya. [Re] A Reproduction of Automatic Multi-Label Prompting: Simple and Interpretable Few | Automatic Multi-Label Prompting: Simple and Interpretable Few-Shot Classificatio |
+| verified | 1.00 | title | Chris Lu, Cong Lu, Robert Tjarko Lange, Jakob Foerster, Jeff Clune, and David Ha. The AI Scientist: Towards Fully Automa | OpenEQA: Embodied Question Answering in the Era of Foundation Models |
+| mismatch | 0.93 | exhausted | METR. Vivaria, 2024. URL https://vivaria.metr.org. Florian Naudet, Charlotte Sakarovitch, Perrine Janiaud, Ioana Cristea | Data sharing and reanalysis of randomized controlled trials in leading biomedica |
+| verified | 1.00 | doi | Sheeba Samuel and Daniel Mietchen. Computational reproducibility of Jupyter notebooks from biomedical publications. Giga | Computational reproducibility of Jupyter notebooks from biomedical publications |
+| mismatch | 1.00 | exhausted | AutoGPT. original-date: 2023-03-16T09:21:07Z. Koustuv Sinha, Maurits Bleeker, Samarth Bhargav, Jessica Zosa Forde, Shara | Prediction Interval: What to Expect When You’re Expecting … A Replication |
+| mismatch | 1.00 | exhausted | Replication. PLOS ONE, 11(9):e0162874, September 2016. ISSN 1932-6203. doi: 10.1371/journal.pone. 0162874. URL https://j | Push button replication: Is impact evaluation evidence for international develop |
+| unresolved | 0.00 | exhausted | Press. SWE-AGENT: Agent-Computer Interfaces Enable Automated Software Engineering. 2024. URL https://swe-agent.com/paper | no strategy produced a verified match |
+| mismatch | 0.75 | exhausted | A Benchmark Details A.1 Original CodeOcean Dataset To obtain a dataset of all 5,090 capsules on CodeOcean and their corr | Table 1: Summary of the article selection criteria used to construct this review |
+| mismatch | 0.64 | exhausted | CORE-Bench. We provide an example of a capsule’s run file that satisfies criteria six (Listing 1) and an example of the  | Listing 1: Example of git diff output. |

@@ -65,3 +65,8 @@ crossref:
   mailto: ""
   min_score: 0.82
   year_tolerance: 1
+
+references:
+  max_attempts: 4
+  use_llm: false
+  mismatch_floor: 0.5

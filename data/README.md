@@ -1,39 +1,39 @@
 # data/
 
-Pipeline'ın girdi ve çıktı katmanı. Kod bu dizinlere `config/pipeline.yaml` içindeki
-`data.raw_dir` ve `data.processed_dir` üzerinden bakar.
+Input and output layer of the pipeline. The code reads these directories through
+`data.raw_dir` and `data.processed_dir` in `config/pipeline.yaml`.
 
 ```
 data/
-  raw/          kaynak PDF'ler, hiç değiştirilmez
-  processed/    OCR pipeline çıktısı, <sha256[:12]>.md
-  processed/figures/<sha12>/   çıkarılan figür PNG'leri
+  raw/          source PDFs, never modified
+  processed/    OCR pipeline output, <sha256[:12]>.md
+  processed/figures/<sha12>/   extracted figure PNGs
 ```
 
-## Kurallar
+## Rules
 
-- `raw/` yalnızca eklenir. Bir PDF değişirse sha256'sı değişir, dolayısıyla cache ve
-  çıktı dosyası da yeni bir ad alır; eski kayıt sessizce ezilmez.
-- `processed/` tamamen üretilebilir. Silinip `ra-ocr batch` ile yeniden oluşturulabilir.
-- Her çıktı dosyası YAML frontmatter taşır: `sha256`, `ocr_engine`, `pages`,
-  `verified_pages`, `status`, `figures`, `figure_files`, `figure_readings`.
-  `status: needs-review` olan dosya vault'a alınmadan önce incelenmelidir.
-- Figür PNG'leri `processed/figures/<sha12>/` altında durur; markdown göreli yolla
-  (`figures/pNNN_figK.png`) bağlar, böylece Obsidian'da da açılır.
+- `raw/` is append-only. If a PDF changes its sha256 changes, so the cache and the output
+  file get a new name and the old record is never silently overwritten.
+- `processed/` is fully reproducible. Delete it and rebuild with `ra-ocr batch`.
+- Every output file carries YAML frontmatter: `sha256`, `ocr_engine`, `pages`,
+  `verified_pages`, `status`, `figures`, `figure_files`, `figure_readings`. A file with
+  `status: needs-review` must be inspected before it enters the vault.
+- Figure PNGs live under `processed/figures/<sha12>/`; the markdown links them with a
+  relative path (`figures/pNNN_figK.png`) so they also open in Obsidian.
 
-## Mevcut makaleler
+## Papers in the repository
 
-| dosya | başlık | sayfa |
+| file | title | pages |
 |---|---|---|
 | `raw/2504.01848.pdf` | PaperBench: Evaluating AI's Ability to Replicate AI Research | 30 |
 | `raw/2409.11363.pdf` | CORE-Bench: Fostering the Credibility of Published Research | 30 |
 
-İkisi de slayt 2'deki motivasyonda atıf verilen çalışmalar.
+Both are cited in the motivation on slide 2.
 
-## Kullanım
+## Usage
 
 ```bash
 ra-ocr batch                       # data/raw -> data/processed
-ra-ocr batch --engine native       # metin katmanı olan PDF'ler için hızlı yol
+ra-ocr batch --engine native       # fast path for text-layer PDFs
 ra-ocr ingest data/raw/2504.01848.pdf --pages 1-5
 ```

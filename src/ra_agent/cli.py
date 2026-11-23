@@ -40,6 +40,10 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--vision-base-url", default=None)
     ingest.add_argument("--critic", action="store_true", help="Tier 2 rubric critic")
     ingest.add_argument("--crossref", action="store_true", help="verify references")
+    ingest.add_argument(
+        "--refs-llm", action="store_true", help="let the LLM propose reference identities"
+    )
+    ingest.add_argument("--refs-attempts", type=int, default=None)
     ingest.add_argument("--json", action="store_true", dest="as_json")
 
     batch = sub.add_parser("batch", help="OCR every PDF under a directory")
@@ -57,6 +61,8 @@ def _build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--vision-base-url", default=None)
     batch.add_argument("--critic", action="store_true")
     batch.add_argument("--crossref", action="store_true")
+    batch.add_argument("--refs-llm", action="store_true")
+    batch.add_argument("--refs-attempts", type=int, default=None)
     return parser
 
 
@@ -158,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
         settings.vision.enabled = True
     if getattr(args, "crossref", False):
         settings.crossref.enabled = True
+    if getattr(args, "refs_llm", False):
+        settings.references.use_llm = True
+        settings.vision.enabled = True
+    if getattr(args, "refs_attempts", None):
+        settings.references.max_attempts = args.refs_attempts
     if args.command == "batch":
         return _batch(args, settings)
     return _ingest(args, settings)

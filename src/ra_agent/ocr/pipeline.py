@@ -10,10 +10,11 @@ from ..schema import CheckResult, FigureRef, OcrDocument, PageResult, Route, Sev
 from ..llm.client import LlmClient
 from .assemble import assemble
 from .critic import critique_page
-from .crossref import CrossrefClient, ReferenceCheck, check_references
+from .crossref import CrossrefClient, ReferenceCheck, split_references
 from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engine
 from .figures import extract_figures
 from .interpret import interpret_figures
+from .refagent import resolve_references
 from .gate import check_figure_grounding, has_blockers, run_gate
 from .render import PageStats, page_count, page_stats, pdf_sha256
 from .router import choose_route, dpi_for
@@ -220,7 +221,12 @@ class OcrPipeline:
         markdown = assemble(ordered, figures)
         references: list[ReferenceCheck] = []
         if self.settings.crossref.enabled:
-            references = check_references(markdown, self._crossref_client())
+            references = resolve_references(
+                split_references(markdown),
+                self._crossref_client(),
+                self.settings.references,
+                self.vision if self.settings.references.use_llm else None,
+            )
         status = (
             "verified"
             if all(page.status == "verified" for page in ordered)

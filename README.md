@@ -1,93 +1,94 @@
 # Research-Assistant-Agent
 
-Agentic research assistant. Bu depo şu an **OCR pipeline**'ını içerir: yeni bir makale
-vault'a girerken sayfaları paralel işleyen, her elementi doğrulayan ve yalnızca başarısız
-sayfaları yeniden deneyen hat.
+Agentic research assistant. This repository currently contains the **OCR pipeline**:
+the path a new paper takes into the vault, processing pages in parallel, verifying every
+element, and retrying only the pages that fail.
 
-Slayt 6'daki tasarım birebir uygulanır:
+The design from slide 6 is implemented directly:
 
 ```
-paralel sayfalar -> routing -> code gate -> evaluator/optimizer
-Tier 1: deterministik unit testler   Tier 2: rubric critic + Crossref
-circuit breaker: <= 3 deneme         çıktı: verified note | #needs-review
+parallel pages -> routing -> code gate -> evaluator/optimizer
+Tier 1: deterministic unit tests   Tier 2: rubric critic + Crossref
+circuit breaker: <= 3 attempts     output: verified note | #needs-review
 ```
 
-## Kurulum
+## Install
 
 ```bash
-pip install --user -e ".[dev]"        # çekirdek + testler
-pip install --user -e ".[vlm]"        # Granite-Docling-258M motoru (docling)
+pip install --user -e ".[dev]"        # core + tests
+pip install --user -e ".[vlm]"        # Granite-Docling-258M engine (docling)
 ```
 
-`docling` yoksa hat `--engine native` ile de çalışır (yalnızca metin katmanı olan PDF'ler).
+Without `docling` the pipeline still runs with `--engine native` (text-layer PDFs only).
 
-## Kullanım
+## Usage
 
 ```bash
 ra-ocr batch                                   # data/raw -> data/processed
-ra-ocr batch --engine native                   # metin katmanı olan PDF'ler için hızlı yol
-ra-ocr batch --figures-llm                     # figürleri görsel modelle yorumla
-ra-ocr ingest data/raw/2504.01848.pdf          # tek PDF
-ra-ocr ingest paper.pdf --pages 1-3,7          # sayfa seçimi
-ra-ocr ingest paper.pdf --device cpu           # 2 GB VRAM'e sığmayan model için
-ra-ocr ingest paper.pdf --vault ./vault        # Obsidian vault kökü
-ra-ocr ingest paper.pdf --json                 # makine okunur çıktı
-ra-ocr ingest paper.pdf --no-figures           # figür çıkarımını kapat
+ra-ocr batch --engine native                   # fast path for text-layer PDFs
+ra-ocr batch --figures-llm                     # interpret figures with a vision model
+ra-ocr ingest data/raw/2504.01848.pdf          # single PDF
+ra-ocr ingest paper.pdf --pages 1-3,7          # page selection
+ra-ocr ingest paper.pdf --device cpu           # for models that do not fit in 2 GB VRAM
+ra-ocr ingest paper.pdf --vault ./vault        # Obsidian vault root
+ra-ocr ingest paper.pdf --json                 # machine-readable output
+ra-ocr ingest paper.pdf --no-figures           # disable figure extraction
 ```
 
-Çıkış kodu: `0` tüm sayfalar doğrulandı, `1` en az bir sayfa `#needs-review`.
+Exit code: `0` when every page is verified, `1` when at least one page is `#needs-review`.
 
-## Veri düzeni
+## Data layout
 
 ```
 data/
-  raw/          kaynak PDF'ler, hiç değiştirilmez
-  processed/    OCR çıktısı, <sha256[:12]>.md
-  processed/figures/<sha12>/   çıkarılan figür PNG'leri
+  raw/          source PDFs, never modified
+  processed/    OCR output, <sha256[:12]>.md
+  processed/figures/<sha12>/   extracted figure PNGs
 ```
 
-`raw/` yalnızca eklenir: PDF değişirse sha256 değişir, cache ve çıktı yeni ad alır, eski
-kayıt ezilmez. `processed/` tamamen üretilebilir, silinip `ra-ocr batch` ile yeniden
-oluşturulur. Ayrıntı: `data/README.md`.
+`raw/` is append-only: if a PDF changes its sha256 changes, so the cache and the output
+file get a new name and the old record is never overwritten. `processed/` is fully
+reproducible: delete it and rerun `ra-ocr batch`. Details: `data/README.md`.
 
-Depoda iki gerçek makale var: `2504.01848.pdf` (PaperBench) ve `2409.11363.pdf`
-(CORE-Bench), ikisi de slayt 2'deki motivasyonda atıf verilen çalışmalar.
+The repository ships two real papers: `2504.01848.pdf` (PaperBench) and
+`2409.11363.pdf` (CORE-Bench), both cited in the motivation on slide 2.
 
-Her çıktı YAML frontmatter taşır (`sha256`, `ocr_engine`, `pages`, `verified_pages`,
-`status`), gövde markdown ve sayfa bazlı `## Validation` tablosu içerir. Obsidian vault
-düzeni için `--vault` kullanılır: `vault/Resources/Parsed/<sha12>.md`.
+Every output carries YAML frontmatter (`sha256`, `ocr_engine`, `pages`, `verified_pages`,
+`status`), a markdown body, and a per-page `## Validation` table. Use `--vault` for the
+Obsidian layout: `vault/Resources/Parsed/<sha12>.md`.
 
-## Akış
+## Pipeline
 
-| Aşama | Modül | Karar veren |
+| Stage | Module | Who decides |
 |---|---|---|
-| Render + istatistik | `ocr/render.py` | kod (PyMuPDF) |
-| Routing | `ocr/router.py` | kod: metin katmanı ≥ 200 karakter → native, değilse VLM |
-| OCR | `ocr/engine.py` | Granite-Docling-258M, sayfa başına, `temperature=0` |
-| Birleştirme | `ocr/assemble.py` | kod: tekrar eden header/footer, sözlük destekli tire kırılması |
-| Figürler | `ocr/figures.py` | kod: raster çıkarımı, caption eşleme, vektör için sayfa render'ı |
-| Figür yorumu | `ocr/interpret.py` + `llm/client.py` | LLM önerir, kod doğrular (grounded critic) |
-| Tier 1 gate | `ocr/gate.py` | kod: 11 deterministik kontrol |
-| Kaynakça | `ocr/crossref.py` | kod: Crossref + başlık benzerliği |
-| Tier 2 critic | `ocr/critic.py` | LLM puanlar, kod eşikle karar verir |
-| Retry / circuit breaker | `ocr/pipeline.py` | kod: DPI merdiveni, ≤ 3 deneme |
-| Not | `vault/note.py` | kod |
+| Render + stats | `ocr/render.py` | code (PyMuPDF) |
+| Routing | `ocr/router.py` | code: text layer >= 200 chars -> native, else VLM |
+| OCR | `ocr/engine.py` | Granite-Docling-258M, per page, `temperature=0` |
+| Assembly | `ocr/assemble.py` | code: repeated headers/footers, dictionary-backed dehyphenation |
+| Figures | `ocr/figures.py` | code: raster extraction, caption matching, page render for vectors |
+| Figure reading | `ocr/interpret.py` + `llm/client.py` | LLM proposes, code verifies (grounded critic) |
+| Tier 1 gate | `ocr/gate.py` | code: 11 deterministic checks |
+| References | `ocr/refagent.py` + `ocr/crossref.py` | code runs the loop, LLM only proposes identities |
+| Tier 2 critic | `ocr/critic.py` | LLM scores, code applies the threshold |
+| Retry / circuit breaker | `ocr/pipeline.py` | code: DPI ladder, <= 3 attempts |
+| Note | `vault/note.py` | code |
 
-Tier 1 kontrolleri: `non_empty`, `printable_ratio`, `repetition_loop`, `coverage`,
+Tier 1 checks: `non_empty`, `printable_ratio`, `repetition_loop`, `coverage`,
 `heading_levels`, `table_columns`, `table_header`, `equation_delimiters`,
-`doctags_balance`, `numeric_agreement`, `reference_fields`. `blocker` düşen sayfa yeniden
-denenir; `warn` düşen sayfa doğrulanmış sayılır ama gerekçesi notta görünür.
+`doctags_balance`, `numeric_agreement`, `reference_fields`. A page with a failing
+`blocker` is retried; a page with a failing `warn` still counts as verified but the reason
+is recorded in the note.
 
-`table_header` bu hatta gerçek bir hatayı yakalamak için eklendi: Granite-Docling tablo
-başlığını düşürüp ilk veri satırını başlık yapıyor (`| 1 | 0.91 |` + ayırıcı). Başlık
-metni kaybı içerik kaybı olduğu için `blocker` sayılır ve sayfa DPI merdiveniyle yeniden
-denenir.
+`table_header` was added because of a real failure in this pipeline: Granite-Docling drops
+the table header and promotes the first data row (`| 1 | 0.91 |` followed by the
+separator). Losing header text is losing content, so it is a `blocker` and the page goes
+back through the DPI ladder.
 
-## Figürler
+## Figures
 
-Sayfa başına raster figürler `page.get_image_info(xrefs=True)` ile bulunur, PNG olarak
-`processed/figures/<sha12>/pNNN_figK.png` altına yazılır ve caption'ına göre markdown'a
-yerleştirilir:
+Raster figures are found with `page.get_image_info(xrefs=True)`, written as PNG under
+`processed/figures/<sha12>/pNNN_figK.png`, and placed in the markdown next to their
+caption:
 
 ```markdown
 ![Figure 1](figures/p002_fig1.png)
@@ -95,20 +96,20 @@ yerleştirilir:
 Figure 1. PaperBench is a benchmark for evaluating AI agents' abilities ...
 ```
 
-- Caption eşleme: `Figure N` / `Fig. N` ile başlayan metin bloğu, figür kutusuna en yakın
-  olan (≤ `max_caption_gap` punto) seçilir; üstte veya altta olabilir.
-- Filtre: `min_side` pikselden küçük veya sayfa alanının `min_area_ratio`'sundan küçük
-  görseller (ikon, logo, çizgi) atlanır.
-- Aynı caption'ı paylaşan paneller `Figure 4 (1/2)`, `Figure 4 (2/2)` olarak numaralanır.
-- Vektör figürlerde raster nesne yoktur; sayfada caption var ama raster yoksa sayfa
-  `pNNN_page.png` olarak render edilir (`kind: page_render`). Bu bir yaklaşımdır, kırpma
-  yapmaz.
-- Frontmatter `figures` sayısını ve `figure_files` listesini taşır.
+- Caption matching: the text block starting with `Figure N` / `Fig. N` closest to the
+  figure box (within `max_caption_gap` points) wins; it may sit above or below.
+- Filter: images smaller than `min_side` pixels or than `min_area_ratio` of the page area
+  (icons, logos, rules) are skipped.
+- Panels sharing one caption are numbered `Figure 4 (1/2)`, `Figure 4 (2/2)`.
+- Vector figures carry no raster object; when a page has a caption but no raster, the page
+  is rendered as `pNNN_page.png` (`kind: page_render`). This is an approximation and does
+  not crop.
+- Frontmatter records the `figures` count and the `figure_files` list.
 
-## Figür yorumlama (opsiyonel)
+## Figure interpretation (optional)
 
-`--figures-llm` ile her figür bir görsel modele gönderilir ve notta alıntı bloğu olarak
-görünür:
+With `--figures-llm` every figure is sent to a vision model and appears in the note as a
+blockquote:
 
 ```markdown
 ![Figure 1](figures/p002_fig1.png)
@@ -118,23 +119,24 @@ görünür:
 > ⚠ not corroborated by page text: 32
 ```
 
-Tasarım slayttaki "code decides, LLM only proposes" ilkesine uyar:
+The design follows the "code decides, LLM only proposes" principle from the slides:
 
-| Adım | Kim karar verir |
+| Step | Who decides |
 |---|---|
-| Prompt + strict JSON şeması | kod (`ocr/interpret.py`) |
-| JSON ayrıştırma, alan kırpma | kod, `pydantic` doğrulaması |
-| **Grounded critic** | kod: modelin bildirdiği her sayı caption + sayfa metninde aranır |
-| `figure_grounding` kontrolü | kod: doğrulanamayan sayı varsa `warn` |
-| Notta gösterim | kod: uyarı satırı doğrudan alıntının altında |
+| Prompt + strict JSON schema | code (`ocr/interpret.py`) |
+| JSON parsing, field truncation | code, `pydantic` validation |
+| **Grounded critic** | code: every number the model reports is looked up in caption + page text |
+| `figure_grounding` check | code: `warn` when a number is not corroborated |
+| Rendering in the note | code: the warning line sits directly under the quote |
 
-`ungrounded` etiketi "halüsinasyon" demek değil, "sayfa metninde teyit edilemedi" demek:
-grafiğin içindeki bir sayı (ör. `--bs 32`) metinde geçmediği için de buraya düşer. Bu
-yüzden `warn`, `blocker` değil.
+The `ungrounded` label does not mean "hallucination", it means "not corroborated by the
+page text": a number printed inside the chart (for example `--bs 32`) never appears in the
+text, so it lands here. That is why it is a `warn`, not a `blocker`.
 
-İstemci OpenAI-uyumlu `/chat/completions` konuşur; OpenRouter, OpenAI, vLLM, Ollama ve
-LM Studio ile aynı kod çalışır. Anahtar `vision.api_key_env` (varsayılan
-`OPEN_ROUTER_API_KEY`) üzerinden ortamdan veya `.env`'den okunur, koda yazılmaz.
+The client speaks the OpenAI-compatible `/chat/completions` protocol; the same code works
+with OpenRouter, OpenAI, vLLM, Ollama and LM Studio. The key is read from the environment
+or `.env` through `vision.api_key_env` (default `OPEN_ROUTER_API_KEY`) and never written
+into the code.
 
 ```bash
 ra-ocr ingest paper.pdf --figures-llm
@@ -142,26 +144,26 @@ ra-ocr batch --figures-llm --vision-model google/gemini-2.5-flash
 ra-ocr ingest paper.pdf --figures-llm --vision-base-url http://localhost:11434/v1
 ```
 
-Okumalar `.cache/figures/<sha12>/<figür>__<model>.json` altında saklanır; aynı figür ve
-model için ikinci kez API çağrısı yapılmaz.
+Readings are cached under `.cache/figures/<sha12>/<figure>__<model>.json`, so the same
+figure and model never costs a second API call.
 
-Bozuk JSON iki kademede kurtarılır: önce kesik nesne kapatılır ve sondaki virgüller
-temizlenir, olmazsa modele bir kez "compact JSON" düzeltici isteği giderilir. Kalıcı çözüm
-constrained decoding'dir (`guided_json`), o zaman geçersiz JSON hiç oluşmaz.
+Broken JSON is recovered in two stages: first the truncated object is closed and trailing
+commas are removed, then the model gets one "compact JSON" retry. The permanent fix is
+constrained decoding (`guided_json`), which prevents invalid JSON from appearing at all.
 
-### Açık kaynak model seçenekleri
+### Open-source model options
 
-| Rol | Model | Lisans | 4-bit |
+| Role | Model | License | 4-bit |
 |---|---|---|---|
 | OCR | `ibm-granite/granite-docling-258M` | Apache 2.0 | ~0.5 GB |
-| Görsel | `ibm-granite/granite-vision-3.1-2b` | Apache 2.0 | ~1.3 GB |
-| Görsel | `Qwen/Qwen2.5-VL-3B-Instruct` | Apache 2.0 | ~2 GB |
+| Vision | `ibm-granite/granite-vision-3.1-2b` | Apache 2.0 | ~1.3 GB |
+| Vision | `Qwen/Qwen2.5-VL-3B-Instruct` | Apache 2.0 | ~2 GB |
 | Agentic | `ibm-granite/granite-4.0-micro` | Apache 2.0 | ~2 GB |
 | Agentic | `Qwen/Qwen3-4B-Instruct-2507` | Apache 2.0 | ~2.5 GB |
 
-Llama ve Gemma lisansları OSI onaylı değildir; "açık kaynak" sayılmaz. Determinizm için
-`temperature=0`, sabit `seed`, `batch_size=1`, aynı quantization dosyası ve aynı runtime
-sürümü gerekir.
+Llama and Gemma licenses are not OSI-approved, so they are not open source. Determinism
+needs `temperature=0`, a fixed `seed`, `batch_size=1`, the same quantization file and the
+same runtime version.
 
 ```bash
 vllm serve ibm-granite/granite-vision-3.1-2b --guided-json --seed 42
@@ -169,51 +171,70 @@ ra-ocr batch --figures-llm --vision-model ibm-granite/granite-vision-3.1-2b \
              --vision-base-url http://localhost:8000/v1
 ```
 
-## Tier 2: rubric critic ve Crossref
+## Tier 2: rubric critic
 
-Tier 1 geçen sayfa, `--critic` verilirse bir rubrik eleştirmenine gider. Dört boyut 1–5
-puanlanır (`fidelity`, `completeness`, `structure`, `no_hallucination`); en düşük boyut
-`min_dimension` altındaysa veya ortalama `min_average` altındaysa sayfa `needs-review`
-olur ve DPI merdiveniyle yeniden denenir. Critic erişilemezse `warn` düşer, hat çökmez.
+A page that passes Tier 1 goes to a rubric critic when `--critic` is given. Four dimensions
+are scored 1-5 (`fidelity`, `completeness`, `structure`, `no_hallucination`); if the lowest
+dimension is below `min_dimension` or the average is below `min_average`, the page becomes
+`needs-review` and re-enters the DPI ladder. If the critic is unreachable the check degrades
+to `warn` and the run does not crash.
 
-`--crossref` verilirse kaynakça girdileri `api.crossref.org` üzerinde aranır. Başlık
-benzerliği `min_score` üstünde ve yıl `year_tolerance` içindeyse `verified`; aksi halde
-`mismatch` veya `unresolved`. Sonuçlar notta `## References check` tablosuna yazılır ve
-`.cache/crossref` altında saklanır, böylece tekrar çalıştırma ağa çıkmaz.
+## Agentic reference resolution
 
-OCR kaynakçayı boş satırlarla ayırmadığı için girdi sınırları "Soyad, A." ve "Kurum."
-kalıplarıyla bulunur. Başlık ayrıştırılamayan girdiler `skipped` olarak işaretlenir;
-yanlış bir `mismatch` üretmek yerine açıkça "başlık bulunamadı" denir.
+`--crossref` verifies bibliography entries against `api.crossref.org`. The first version
+asked one bibliographic query per entry and gave up when the answer did not match, which
+produced a high mismatch rate for reasons unrelated to fabricated citations: OCR merges
+entries, titles get confused with author lists, and a single query is a weak probe.
+
+`ocr/refagent.py` replaces that with the same loop the OCR pipeline uses: perceive, act,
+evaluate, reflect, retry, stop at a circuit breaker.
+
+| Stage | What happens | Who decides |
+|---|---|---|
+| Perceive | DOI and arXiv identifiers are extracted by regex; year from the entry | code |
+| Act | One strategy per attempt: `doi` -> `arxiv` -> `title` -> `title_year` | code |
+| Evaluate | Title similarity (`rapidfuzz`) plus year tolerance decides the status | code |
+| Reflect | The failed attempt is appended to the trace with its score | code |
+| Rescue | If the budget is not spent, the LLM proposes a title/DOI as strict JSON | LLM proposes, code validates |
+| Stop | `max_attempts` network calls, then `unresolved` with the full trace | code |
+
+Strategies that cannot run are skipped without consuming budget, so a reference without a
+DOI does not waste an attempt. Every check records its `strategy` and its `attempts` trace,
+and the note shows both in the `## References check` table.
 
 ```bash
-ra-ocr batch --critic --crossref
-ra-ocr ingest paper.pdf --critic --crossref --json
+ra-ocr batch --crossref
+ra-ocr batch --crossref --refs-llm --refs-attempts 5
+ra-ocr ingest paper.pdf --crossref --json
 ```
 
-## Ayarlar
+Results are cached under `.cache/crossref`, so reruns stay offline.
 
-`config/pipeline.yaml` içindeki değerler `Settings` modeline yüklenir:
+## Settings
+
+Values in `config/pipeline.yaml` are loaded into the `Settings` model:
 
 ```bash
 ra-ocr ingest paper.pdf --config config/pipeline.yaml
 ```
 
-2 GB VRAM'li makinelerde `engine.page_batch_size: 1` ve `pipeline.concurrency: 2` ile
-başlayın. Granite-Docling-258M 2 GB'a sığmazsa motor `CUDA out of memory` verir; hat bunu
-`engine_error` olarak kaydeder ve sayfayı `#needs-review` yapar, süreç çökmez. CPU için
-`--device cpu` kullanın.
+On machines with 2 GB VRAM start with `engine.page_batch_size: 1` and
+`pipeline.concurrency: 2`. If Granite-Docling-258M does not fit in 2 GB the engine raises
+`CUDA out of memory`; the pipeline records it as `engine_error` and marks the page
+`#needs-review` instead of crashing. Use `--device cpu` to run on CPU.
 
-## Testler
+## Tests
 
 ```bash
 pytest -q
 ```
 
-`tests/unit/test_gate.py` her kontrolü sentetik bozuk çıktıyla sınar,
-`tests/unit/test_pipeline.py` uçtan uca akışı, cache'i ve circuit breaker'ı doğrular.
+`tests/unit/test_gate.py` exercises every check with synthetic broken output,
+`tests/unit/test_pipeline.py` covers the end-to-end flow, the cache and the circuit
+breaker, and `tests/unit/test_refagent.py` covers the reference strategy ladder.
 
-## Sıradaki adımlar
+## Next steps
 
-- Tier 2 rubric critic (görüntü + metin, strict JSON) ve Crossref doğrulaması
-- Paper summary / reproduction / vault-context pipeline'ları (slayt 7-9)
-- LangGraph adaptörü: `pipeline.py` saf düğümlerden oluştuğu için tek sarmalayıcı yeterli
+- Paper summary / reproduction / vault-context pipelines (slides 7-9)
+- Crop vector figures instead of rendering the whole page
+- LangGraph adapter: `pipeline.py` is built from pure nodes, so one wrapper is enough
