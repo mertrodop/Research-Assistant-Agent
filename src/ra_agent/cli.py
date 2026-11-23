@@ -63,6 +63,15 @@ def _build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--crossref", action="store_true")
     batch.add_argument("--refs-llm", action="store_true")
     batch.add_argument("--refs-attempts", type=int, default=None)
+
+    agent = sub.add_parser("agent", help="run the tool-calling agent on a task")
+    agent.add_argument("task", help="what the agent should do, in one sentence")
+    agent.add_argument("--config", type=Path, default=None)
+    agent.add_argument("--engine", choices=["granite_docling", "native"], default=None)
+    agent.add_argument("--model", default=None)
+    agent.add_argument("--base-url", default=None)
+    agent.add_argument("--max-steps", type=int, default=None)
+    agent.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -145,13 +154,50 @@ def _batch(args, settings: Settings) -> int:
     return 0 if failures == 0 else 1
 
 
+def _agent(args, settings: Settings) -> int:
+    from .agent import Agent, build_tools
+    from .llm.client import build_vision_client
+
+    settings.agent.enabled = True
+    if args.max_steps:
+        settings.agent.max_steps = args.max_steps
+    if args.model:
+        settings.vision.model = args.model
+    if args.base_url:
+        settings.vision.base_url = args.base_url
+    settings.vision.enabled = True
+
+    client = build_vision_client(settings.vision)
+    tools = build_tools(settings)
+    run = Agent(client, tools, settings.agent).run(args.task)
+
+    trace = Path(settings.agent.trace_dir) / run.trace_name()
+    run.save(trace)
+    if args.as_json:
+        payload = run.to_dict()
+        payload["trace"] = str(trace)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for step in run.steps:
+            mark = "ok " if not step.error else "err"
+            print(f"[{step.index}] {mark} {step.action or '-'} {step.args or ''}")
+            if step.thought:
+                print(f"      thought: {step.thought}")
+            if step.error:
+                print(f"      error  : {step.error}")
+        print(f"\nstopped  : {run.stopped}")
+        print(f"answer   : {run.answer or '-'}")
+        print(f"trace    : {trace}")
+    return 0 if run.ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     load_env_file()
     settings = Settings.load(args.config)
-    if args.engine:
+    if getattr(args, "engine", None):
         settings.engine.name = args.engine
-    if args.device:
+    if getattr(args, "device", None):
         settings.engine.device = args.device
     if getattr(args, "figures_llm", False):
         settings.vision.enabled = True
@@ -171,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
         settings.references.max_attempts = args.refs_attempts
     if args.command == "batch":
         return _batch(args, settings)
+    if args.command == "agent":
+        return _agent(args, settings)
     return _ingest(args, settings)
 
 

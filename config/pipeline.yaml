@@ -70,3 +70,9 @@ references:
   max_attempts: 4
   use_llm: false
   mismatch_floor: 0.5
+
+agent:
+  enabled: false
+  max_steps: 8
+  max_consecutive_errors: 2
+  trace_dir: data/processed/traces

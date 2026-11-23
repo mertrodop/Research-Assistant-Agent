@@ -72,6 +72,7 @@ Obsidian layout: `vault/Resources/Parsed/<sha12>.md`.
 | Tier 2 critic | `ocr/critic.py` | LLM scores, code applies the threshold |
 | Retry / circuit breaker | `ocr/pipeline.py` | code: DPI ladder, <= 3 attempts |
 | Note | `vault/note.py` | code |
+| Agent loop | `agent/loop.py` + `agent/tools.py` | LLM proposes one action, code validates and stops |
 
 Tier 1 checks: `non_empty`, `printable_ratio`, `repetition_loop`, `coverage`,
 `heading_levels`, `table_columns`, `table_header`, `equation_delimiters`,
@@ -209,6 +210,58 @@ ra-ocr ingest paper.pdf --crossref --json
 ```
 
 Results are cached under `.cache/crossref`, so reruns stay offline.
+
+## Agent loop
+
+`ra-ocr agent` puts the LLM at the centre of the system as a tool-calling
+orchestrator. The model proposes one action per step; code validates it, runs it, and
+decides when to stop.
+
+```
+perceive -> propose -> validate -> act -> observe -> reflect -> repeat
+```
+
+```bash
+ra-ocr agent "List the papers under data/raw and report the one with the most pages."
+ra-ocr agent "Run the Tier 1 gate on page 1 of data/raw/2504.01848.pdf." --engine native
+ra-ocr agent "..." --max-steps 6 --json
+```
+
+The model answers with strict JSON, either a tool call or a finish:
+
+```json
+{"thought": "why this step", "action": "gate", "args": {"pdf": "data/raw/x.pdf", "page": 1}}
+{"thought": "why the task is done", "action": "finish", "answer": "short summary"}
+```
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `list_papers` | - | PDFs under `data/raw` with sha, page count, size |
+| `ocr` | `pdf`, `pages` | verification status, review pages, char count |
+| `gate` | `pdf`, `page` | failing checks, blockers, warnings |
+| `references` | `pdf`, `max_attempts` | Crossref status counts and unresolved entries |
+| `read_note` | `sha` | processed note path and head |
+| `write_report` | `name`, `body` | markdown report under `data/processed/reports` |
+
+Every tool declares a pydantic argument model, so a malformed proposal is rejected by
+code before anything runs. A tool never raises: failures come back as observations, which
+is what lets the loop reflect and change approach.
+
+Circuit breakers, all in code:
+
+| Condition | `stopped` value |
+|---|---|
+| `finish` action with an answer | `finish` |
+| `max_steps` reached | `step_budget` |
+| Same tool with identical arguments twice | `repeated_action` |
+| `max_consecutive_errors` invalid JSON replies | `invalid_actions` |
+| `max_consecutive_errors` unknown tools | `unknown_tools` |
+| `max_consecutive_errors` failing tools | `tool_errors` |
+| LLM endpoint unreachable | `llm_error` |
+
+Each run writes a replayable trace to `data/processed/traces/<timestamp>-<stopped>-<slug>.json`
+with every thought, action, argument and observation. Exit code is `0` only when the run
+finished with an answer.
 
 ## Settings
 

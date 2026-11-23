@@ -98,6 +98,15 @@ class ReferenceSettings(BaseModel):
     mismatch_floor: float = 0.5
 
 
+class AgentSettings(BaseModel):
+    """Tool-calling loop. Code owns the stop conditions, the model only proposes."""
+
+    enabled: bool = False
+    max_steps: int = 8
+    max_consecutive_errors: int = 2
+    trace_dir: str = "data/processed/traces"
+
+
 class Settings(BaseModel):
     render: RenderSettings = Field(default_factory=RenderSettings)
     router: RouterSettings = Field(default_factory=RouterSettings)
@@ -110,6 +119,7 @@ class Settings(BaseModel):
     critic: CriticSettings = Field(default_factory=CriticSettings)
     crossref: CrossrefSettings = Field(default_factory=CrossrefSettings)
     references: ReferenceSettings = Field(default_factory=ReferenceSettings)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Settings":
