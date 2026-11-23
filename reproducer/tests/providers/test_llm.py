@@ -19,6 +19,7 @@ from reproducer.providers.llm import (
     LLM,
     Budget,
     BudgetExceeded,
+    ContextTooLong,
     FakeLLM,
     LLMError,
     LLMResponse,
@@ -797,3 +798,36 @@ def test_metered_on_record_not_called_on_failure() -> None:
     with pytest.raises(LLMError):
         m.complete("s", "p", max_tokens=5)
     assert seen == [] and m.records() == ()
+
+
+# --------------------------------------------------------------------------- context guard
+
+
+def test_ollama_context_too_long_makes_no_request(stub: Stub) -> None:
+    client = OllamaLLM(stub.url, "m", num_ctx=1000)
+    prompt = "x" * 3500  # ~1000 tokens estimated
+    with pytest.raises(ContextTooLong, match="num_ctx 1000"):
+        client.complete("", prompt, max_tokens=1)
+    assert stub.requests == []
+    assert isinstance(ContextTooLong("x"), LLMError)
+
+
+def test_ollama_context_at_limit_is_sent(stub: Stub) -> None:
+    stub.add("POST", "/api/chat", 200, _ollama_ok("hi"))
+    client = OllamaLLM(stub.url, "m", num_ctx=1000)
+    client.complete("ab", "x" * 3148, max_tokens=100)  # 3150 / 3.5 + 100 == 1000
+    assert stub.posts("/api/chat")[0]["json"]["options"]["num_ctx"] == 1000
+
+
+def test_ollama_num_ctx_default_and_env_override() -> None:
+    assert make_llm("ollama:m", {}).num_ctx == 8192  # type: ignore[attr-defined]
+    assert make_llm("ollama:m", {"OLLAMA_NUM_CTX": "16384"}).num_ctx == 16384  # type: ignore[attr-defined]
+
+
+def test_metered_context_too_long_releases_budget() -> None:
+    budget = Budget(max_tokens_total=10_000)
+    metered = MeteredLLM(OllamaLLM("http://127.0.0.1:9", "m", num_ctx=100), budget, "n")
+    with pytest.raises(ContextTooLong):
+        metered.complete("s", "p" * 1000, max_tokens=50)
+    assert budget.used_tokens == 0 and budget.remaining_tokens == 10_000
+    assert metered.records() == ()

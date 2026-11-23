@@ -11,6 +11,9 @@ export OPENROUTER_JSON_MODE=schema
 export REPRODUCER_LLM=ollama:qwen2.5-coder:7b
 # Local Ollama server used by the ollama: backend.
 export OLLAMA_HOST=http://localhost:11434
+# Context window sent to Ollama on every call (tokens). Calls whose estimated size
+# (prompt chars / 3.5 + max_tokens) exceeds it fail fast with ContextTooLong.
+export OLLAMA_NUM_CTX=8192
 
 # Per-node overrides (REPRODUCER_LLM_<NODE>): Claude via OpenRouter. Model ids are
 # OpenRouter's ("anthropic/claude-haiku-5.5"), not Anthropic's ("claude-haiku-5-5").
@@ -24,3 +27,7 @@ export REPRODUCER_LLM_ORCHESTRATOR=openrouter:anthropic/claude-haiku-5.5
 
 # Model for `pytest -m llm_live -k openrouter` (one small paid call).
 export REPRODUCER_LIVE_OPENROUTER_MODEL=anthropic/claude-haiku-5.5
+
+# LangSmith tracing (pulled in by langgraph) stays OFF: we may process unpublished repos,
+# so prompts and repo text must never be sent to an external tracing service.
+export LANGSMITH_TRACING=false

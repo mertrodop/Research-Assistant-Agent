@@ -1,4 +1,4 @@
-"""Subtasks node: deterministic repo-fact extractors.
+"""Subtasks node: deterministic repo-fact extractors + the gated LLM subtasks A/B/C.
 
 Pure functions (text in, models out). Repo code is NEVER executed, imported or eval'd:
 Python is read with `ast`, YAML with `yaml.safe_load`, TOML with tomllib/tomli, JSON with
@@ -13,18 +13,27 @@ import ast
 import configparser
 import hashlib
 import json
+import posixpath
 import re
+import shlex
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Set
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from reproducer.domain.evidence import Evidence, make_evidence
+from reproducer.domain.contracts import EntrypointList, EnvSpec, WorkflowAnalysis
+from reproducer.domain.evidence import Evidence, EvidenceKind, canonical_json, make_evidence
+from reproducer.domain.grounding import CITATION_MAX_QUOTE_CHARS, Citation, normalize_repo_path
 from reproducer.domain.inventory import RepoInventory
+from reproducer.domain.unknowns import UnknownOpened, unknown_id_for
+from reproducer.graph.gate import gated_call
 from reproducer.graph.nodes.configure import MAX_CONFIG_BYTES
+from reproducer.graph.state import SubtaskSummary
+from reproducer.providers.llm import LLM, BudgetExceeded, LLMError
 
 if sys.version_info >= (3, 11):  # pragma: no cover - project targets 3.10
     import tomllib
@@ -882,3 +891,734 @@ def collect_texts(
         except (ValueError, OSError):
             continue
     return out
+
+
+# --------------------------------------------------------------------------- version scan
+
+
+class VersionMention(_Frozen):
+    package: str  # canonical: python, torch, torchvision, cuda, cudnn, tensorflow, numpy
+    version: str  # as written, without a leading "v"
+    quote: str  # the whole source line, stripped
+
+
+_VERSION_PACKAGES = {
+    "python": "python",
+    "pytorch": "torch",
+    "torch": "torch",
+    "torchvision": "torchvision",
+    "cuda": "cuda",
+    "cudnn": "cudnn",
+    "tensorflow": "tensorflow",
+    "numpy": "numpy",
+}
+_VERSION_RE = re.compile(
+    r"(?<![\w.-])(python|pytorch|torchvision|torch|cudnn|cuda|tensorflow|numpy)"
+    r"(?:\s+version\s+|\s*(?:===|==|>=|<=|~=|>|<|=|:)?\s*)"
+    r"v?(\d+(?:\.\d+){0,2})(?!\w|\.\d)",
+    re.IGNORECASE,
+)
+
+
+def find_version_mentions(text: str) -> tuple[VersionMention, ...]:
+    """Versions of python/torch/torchvision/cuda/cudnn/tensorflow/numpy stated in text
+    (case-insensitive, optional "v", 1-3 dot-separated parts). Pure regex; deduplicated,
+    in text order. A bare number is never a mention: the package name must precede it."""
+    out: list[VersionMention] = []
+    seen: set[tuple[str, str, str]] = set()
+    for line in text.splitlines():
+        for m in _VERSION_RE.finditer(line):
+            key = (_VERSION_PACKAGES[m.group(1).lower()], m.group(2), line.strip())
+            if key not in seen:
+                seen.add(key)
+                out.append(VersionMention(package=key[0], version=key[1], quote=key[2]))
+    return tuple(out)
+
+
+def version_evidence(evidence: Mapping[str, Evidence]) -> tuple[Evidence, ...]:
+    """Derived '<path>#versions' evidence for every observed README / requirement-file text
+    (pure), linked to the scanned file's evidence."""
+    out: list[Evidence] = []
+    for ev in evidence.values():
+        if ev.confidence != "observed" or not isinstance(ev.content.get("text"), str):
+            continue
+        path = str(ev.content.get("path", ev.locator))
+        if ev.kind != "readme" and not (ev.kind == "repo_file" and _requirement_parser(path)):
+            continue
+        mentions = find_version_mentions(ev.content["text"])
+        out.append(
+            make_evidence(
+                kind="repo_file",
+                source=ev.source,
+                locator=f"{path}#versions",
+                content={"parser": "versions", "result": _jsonable(mentions)},
+                confidence="derived",
+                authority="repo",
+                links=(ev.evidence_id,),
+            )
+        )
+    return tuple(out)
+
+
+# --------------------------------------------------------------------------- metric lines
+
+
+class MetricLine(_Frozen):
+    path: str
+    line_no: int  # 1-based
+    line: str  # stripped source line
+
+
+_METRIC_CALL_RE = re.compile(
+    r"(?:^|[^\w.])(?:print|tqdm\.write|logging\.\w+|(?:\w+\.)*logger\.\w+|[\w.]+\.add_scalars?)"
+    r"\s*\("
+)
+_METRIC_WORD_RE = re.compile(r"acc|err|loss|top1|top5|test_|val_|f1|bleu|map", re.IGNORECASE)
+_MAX_METRIC_LINES_SHOWN = 40
+
+
+def find_metric_lines(texts: Mapping[str, str]) -> tuple[MetricLine, ...]:
+    """Lines that print/log a metric-like value (pure regex; comments skipped): a call to
+    print, tqdm.write, logging.*, *logger.* or *.add_scalar(s) on a line containing
+    acc|err|loss|top1|top5|test_|val_|f1|bleu|map (case-insensitive). Sorted by path."""
+    out: list[MetricLine] = []
+    for path in sorted(texts):
+        for no, raw in enumerate(texts[path].splitlines(), start=1):
+            line = raw.strip()
+            if line.startswith("#") or not _METRIC_CALL_RE.search(line):
+                continue
+            if _METRIC_WORD_RE.search(line):
+                out.append(MetricLine(path=path, line_no=no, line=line))
+    return tuple(out)
+
+
+def metric_line_evidence(evidence: Mapping[str, Evidence]) -> tuple[Evidence, ...]:
+    """Derived '<path>#metric_lines' evidence for every entrypoint candidate whose head is
+    stored (pure), linked to that file's observed evidence."""
+    entry_paths = {c.path for c in load_repo_facts(evidence)[1].candidates}
+    out: list[Evidence] = []
+    for ev in evidence.values():
+        path = str(ev.content.get("path", ev.locator))
+        head = ev.content.get("head")
+        if ev.confidence != "observed" or path not in entry_paths or not isinstance(head, str):
+            continue
+        lines = find_metric_lines({path: head})
+        out.append(
+            make_evidence(
+                kind="repo_file",
+                source=ev.source,
+                locator=f"{path}#metric_lines",
+                content={"parser": "metric_lines", "result": _jsonable(lines)},
+                confidence="derived",
+                authority="repo",
+                links=(ev.evidence_id,),
+            )
+        )
+    return tuple(out)
+
+
+# --------------------------------------------------------------------------- example commands
+
+
+class ExampleCommand(_Frozen):
+    path: str  # the entrypoint candidate it runs
+    line: str  # the command (backslash continuations joined)
+    source: str  # README or shell script it was found in
+
+
+_INTERPRETERS = frozenset({"python", "python3", "bash", "sh"})
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$")
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_PROMPT_PREFIXES = ("$ ", "> ")
+MAX_SHELL_SCRIPTS = 20
+
+
+def is_shell_script(path: str) -> bool:
+    return path.lower().endswith(".sh") and not is_skipped_path(path)
+
+
+def _continued_lines(text: str) -> Iterable[str]:
+    """Physical lines with trailing-backslash continuations joined by a single space."""
+    buf: list[str] = []
+    for raw in text.splitlines():
+        stripped = raw.rstrip()
+        if stripped.endswith("\\"):
+            buf.append(stripped[:-1].strip())
+            continue
+        buf.append(stripped.strip())
+        yield " ".join(p for p in buf if p)
+        buf = []
+    if buf:
+        yield " ".join(p for p in buf if p)
+
+
+def _command_target(segment: str, candidates: Set[str], source_dir: str) -> str | None:
+    """Candidate path run by `segment` (env vars, python/bash/sh, -m module), else None."""
+    try:
+        tokens = shlex.split(segment, comments=True)
+    except ValueError:
+        tokens = segment.split()
+    i = 0
+    while i < len(tokens) and _ENV_ASSIGN_RE.match(tokens[i]):
+        i += 1
+    if i >= len(tokens) or tokens[i] not in _INTERPRETERS:
+        return None
+    i += 1
+    while i < len(tokens) and tokens[i].startswith("-") and tokens[i] != "-m":
+        i += 1
+    if i >= len(tokens):
+        return None
+    if tokens[i] == "-m":
+        if i + 1 >= len(tokens):
+            return None
+        mod = tokens[i + 1].replace(".", "/")
+        options = [f"{mod}.py", f"{mod}/__main__.py"]
+    else:
+        options = [tokens[i]]
+        if source_dir:
+            options.append(f"{source_dir}/{tokens[i]}")
+    for opt in options:
+        try:
+            norm = normalize_repo_path(opt)
+        except ValueError:
+            continue
+        if norm in candidates:
+            return norm
+    return None
+
+
+def find_example_commands(
+    texts: Mapping[str, str], candidates: Set[str]
+) -> tuple[ExampleCommand, ...]:
+    """Command lines that run an entrypoint candidate (pure), from README / shell texts
+    (source path -> text): fenced blocks and plain lines alike, inline `code` spans checked
+    separately, backslash continuations joined, leading "$ " / "> " prompts and env var
+    assignments skipped, then python/python3/bash/sh followed by a candidate path (or
+    "python -m pkg.mod" mapping to pkg/mod.py or pkg/mod/__main__.py). Deduplicated."""
+    out: list[ExampleCommand] = []
+    seen: set[tuple[str, str, str]] = set()
+    for source in sorted(texts):
+        source_dir = posixpath.dirname(source)
+        for line in _continued_lines(texts[source]):
+            segments = [m.group(1).strip() for m in _INLINE_CODE_RE.finditer(line)] or [line]
+            for seg in segments:
+                for prefix in _PROMPT_PREFIXES:
+                    seg = seg.removeprefix(prefix)
+                seg = seg.strip()
+                target = _command_target(seg, candidates, source_dir) if seg else None
+                key = (target or "", seg, source)
+                if target is not None and key not in seen:
+                    seen.add(key)
+                    out.append(ExampleCommand(path=target, line=seg, source=source))
+    return tuple(out)
+
+
+def command_evidence(evidence: Mapping[str, Evidence]) -> tuple[Evidence, ...]:
+    """Derived '<source>#commands' evidence for every observed README / shell-script text
+    (pure), linked to that file's evidence."""
+    candidates = {c.path for c in load_repo_facts(evidence)[1].candidates}
+    out: list[Evidence] = []
+    for ev in evidence.values():
+        text = ev.content.get("text")
+        path = str(ev.content.get("path", ev.locator))
+        if ev.confidence != "observed" or not isinstance(text, str):
+            continue
+        if ev.kind != "readme" and not (ev.kind == "repo_file" and is_shell_script(path)):
+            continue
+        commands = find_example_commands({path: text}, candidates)
+        out.append(
+            make_evidence(
+                kind="repo_file",
+                source=ev.source,
+                locator=f"{path}#commands",
+                content={"parser": "commands", "result": _jsonable(commands)},
+                confidence="derived",
+                authority="repo",
+                links=(ev.evidence_id,),
+            )
+        )
+    return tuple(out)
+
+
+# --------------------------------------------------------------------------- LLM subtasks
+# A env, B entrypoints, C workflow. The LLM classifies and locates; the contracts' validators
+# (grounding against repo_files / evidence texts / entrypoint args) verify in code.
+
+PROMPT_HEAD_CHARS = 4_000  # per py/config head shown in the prompt (texts keep the full head)
+_FACT_CHARS = 1_500
+_MAX_LISTED_FILES = 200
+# Unknown names each subtask may propose (enforced via context["allowed_unknowns"]).
+ALLOWED_UNKNOWNS: dict[str, frozenset[str]] = {
+    "A": frozenset({"python_version", "torch_version", "cuda_version"}),
+    "B": frozenset(),
+    "C": frozenset({"dataset_source", "checkpoint_url", "eval_protocol"}),
+}
+# Package names whose "<canonical>_version" unknown is dropped when the version is cited.
+_PKG_CANONICAL = {"pytorch": "torch", "cudatoolkit": "cuda", "python3": "python"}
+
+_CITE = """Citation = {"evidence_id": "E1", "quote": "<text copied from that source>"}
+Each source text is headed by an alias like [E1]; use that alias as evidence_id.
+Copy quotes character by character from the source (max 300 chars)."""
+
+
+def _unknowns_rule(kind: str) -> str:
+    names = sorted(ALLOWED_UNKNOWNS[kind])
+    if not names:
+        return 'Always return "unknowns": []. Never invent paths, versions or arguments.'
+    return (
+        "If one of these is needed but not stated, add an unknown instead of guessing:\n"
+        f'{{"name": one of {names}, "why": "short reason"}}. Only these names.\n'
+        "Never invent paths, versions or arguments."
+    )
+
+
+SYSTEM_A = f"""You extract the software environment of a Python research repo.
+Return ONLY JSON:
+{{"python": PackageFact or null, "packages": [PackageFact], "gpu_required": true/false/null,
+ "unknowns": [Unknown]}}
+PackageFact = {{"name": "torch", "version": "0.4.0" or null, "citation": Citation or null}}
+{_CITE}
+Prefer the "Verified version mentions": cite their quote with the alias shown.
+A version must appear in its quote. No citation -> version null.
+{_unknowns_rule("A")}"""
+
+SYSTEM_B = f"""You find the scripts used to run a Python research repo.
+Return ONLY JSON:
+{{"entrypoints": [{{"path": "train.py", "kind": "train" | "eval" | "other",
+   "example": Citation or null}}],
+ "unknowns": []}}
+{_CITE}
+Rules:
+- One entry per script: each path at most once. path must be a listed entrypoint candidate.
+- kind: "train" if the script trains (even if it also evaluates), "eval" only for
+  evaluation-only scripts.
+- example: pick the verified command for each script from "Verified example commands" and
+  cite it with the alias shown there; copy the whole command exactly, flags included.
+  If a script has no verified command, example is null.
+- Do not list the flags separately: code reads them from your example.
+{_unknowns_rule("B")}"""
+
+SYSTEM_C = f"""You map the experiment workflow of a Python research repo.
+Return ONLY JSON:
+{{"train_scripts": ["path"], "eval_scripts": ["path"], "configs": ["path"],
+ "datasets": [{{"name": "...", "citation": Citation or null}}],
+ "checkpoints": [{{"name": "...", "url": "..." or null, "citation": Citation}}],
+ "metric_outputs": [{{"path": "script.py", "metric": "test_acc", "citation": Citation}}],
+ "unknowns": [Unknown]}}
+{_CITE}
+Rules:
+- Paths must be repo files listed in the context; each path once. Empty list if none.
+- metric_outputs: pick from the "Verified metric output lines"; cite that line with the
+  alias shown there (not the script's own alias).
+{_unknowns_rule("C")}"""
+
+_CIT_EX = '{"evidence_id": "E1", "quote": "<copy exact text>"}'
+SUBTASK_EXAMPLES: dict[str, str] = {
+    "citation": _CIT_EX,
+    "example": _CIT_EX,
+    "packages": f'{{"name": "torch", "version": "0.4.0", "citation": {_CIT_EX}}}',
+    "python": f'{{"name": "python", "version": "3.6", "citation": {_CIT_EX}}}',
+    "unknowns": '{"name": "<an allowed name>", "why": "<short reason>"}',
+    "entrypoints": '{"path": "train.py", "kind": "train", '
+    '"example": {"evidence_id": "E1", "quote": "python train.py --epochs 10"}} '
+    '(no verified command -> "example": null)',
+    "datasets": '{"name": "cifar10", "citation": null}',
+    "checkpoints": f'{{"name": "model", "url": null, "citation": {_CIT_EX}}}',
+    "metric_outputs": f'{{"path": "train.py", "metric": "test_acc", "citation": {_CIT_EX}}}',
+}
+
+SubtaskKind = Literal["A", "B", "C"]
+SUBTASK_KINDS: tuple[SubtaskKind, ...] = ("A", "B", "C")
+_SUBTASKS: dict[str, tuple[type[BaseModel], str, EvidenceKind]] = {
+    "A": (EnvSpec, SYSTEM_A, "env_spec"),
+    "B": (EntrypointList, SYSTEM_B, "entrypoints"),
+    "C": (WorkflowAnalysis, SYSTEM_C, "workflow"),
+}
+_REQUIRED_SET_CONTEXT = ("repo_files", "evidence_ids")
+_REQUIRED_MAP_CONTEXT = (
+    "texts",
+    "entrypoint_args",
+    "aliases",
+    "evidence_kinds",
+    "metric_line_evidence",
+    "command_evidence",
+)
+
+
+def load_repo_facts(
+    evidence: Mapping[str, Evidence],
+) -> tuple[tuple[Evidence, ...], EntrypointScan]:
+    """Rebuild the extractor output from stored evidence (pure).
+
+    Returns (derived '#parsed' facts in input order, EntrypointScan from the 'entrypoint'
+    facts). '#versions' / '#metric_lines' evidence is not a fact here (build_subtask_context
+    reads it).
+    """
+    facts = tuple(
+        ev
+        for ev in evidence.values()
+        if ev.kind == "repo_file"
+        and ev.confidence == "derived"
+        and ev.locator.endswith("#parsed")
+        and "parser" in ev.content
+    )
+    candidates: list[EntrypointCandidate] = []
+    unparsable: dict[str, str] = {}
+    for ev in facts:
+        if ev.content["parser"] != "entrypoint":
+            continue
+        path = ev.locator.removesuffix("#parsed")
+        result = ev.content["result"]
+        if isinstance(result, Mapping) and "error" in result:
+            unparsable[path] = str(result["error"])
+        else:
+            candidates.append(EntrypointCandidate.model_validate(result))
+    candidates.sort(key=lambda c: c.path)
+    return facts, EntrypointScan(candidates=tuple(candidates), unparsable=unparsable)
+
+
+def _inventory(evidence: Mapping[str, Evidence]) -> RepoInventory:
+    invs = {
+        ev.evidence_id: ev
+        for ev in evidence.values()
+        if ev.kind == "repo_file" and ev.locator == "inventory"
+    }
+    if len(invs) != 1:
+        raise ValueError(f"expected exactly one inventory evidence, found {len(invs)}")
+    return RepoInventory.model_validate(next(iter(invs.values())).content)
+
+
+def _fact_line(ev: Evidence) -> str:
+    path = ev.locator.removesuffix("#parsed")
+    body = canonical_json(ev.content["result"])
+    if len(body) > _FACT_CHARS:
+        body = body[:_FACT_CHARS] + " ...[cut]"
+    return f"- {path} ({ev.content['parser']}): {body}"
+
+
+def build_subtask_context(
+    evidence: Mapping[str, Evidence],
+    facts: Iterable[Evidence],
+    scan: EntrypointScan,
+    *,
+    max_chars: int = 12_000,
+) -> tuple[dict[str, Any], dict[SubtaskKind, str]]:
+    """Validation context + one packed prompt per subtask (pure).
+
+    Context: repo_files (frozenset, from the single inventory record), evidence_ids
+    (frozenset of the ids in texts), texts (evidence_id -> README full text, requirement /
+    docker file text, or head of a py/config file), entrypoint_args (path -> frozenset of
+    arg names), aliases ("E1".. -> evidence_id, in prompt order), evidence_kinds
+    (evidence_id -> kind), metric_line_evidence (path -> id of its non-empty
+    '<path>#metric_lines' evidence, which is citable: its text is the verified lines),
+    command_evidence (candidate path -> ids of the non-empty '<source>#commands' evidence
+    holding a command for it; also citable, text = the verified commands).
+    Prompts show aliases only, README + facts + entrypoint heads
+    first; A also gets the "Verified version mentions" ('#versions' evidence), B the
+    "Verified example commands" ('#commands') and C the "Verified metric output lines"
+    ('#metric_lines'), all found by code.
+    """
+    inv = _inventory(evidence)
+    entry_paths = {c.path for c in scan.candidates}
+    entries: list[tuple[int, int, Evidence, str, str, str]] = []
+    for idx, ev in enumerate(evidence.values()):
+        if ev.confidence != "observed" or ev.kind not in ("readme", "repo_file"):
+            continue
+        path = str(ev.content.get("path", ev.locator))
+        if isinstance(ev.content.get("text"), str):  # README, requirement and docker files
+            text = ev.content["text"]
+            prompt_text = text
+            priority = 100 if ev.kind == "readme" else 70
+        elif isinstance(ev.content.get("head"), str):  # py / config digest
+            text = ev.content["head"]
+            prompt_text = text[:PROMPT_HEAD_CHARS]
+            if len(text) > PROMPT_HEAD_CHARS:
+                prompt_text += f"\n[... {len(text) - PROMPT_HEAD_CHARS} more chars]"
+            priority = 80 if path in entry_paths else 60
+        else:
+            continue
+        entries.append((priority, idx, ev, path, text, prompt_text))
+    entries.sort(key=lambda e: (-e[0], e[1]))
+
+    texts: dict[str, str] = {}
+    aliases: dict[str, str] = {}
+    alias_of: dict[str, str] = {}
+    sections: list[ContextSection] = []
+    for priority, _, ev, path, text, prompt_text in entries:
+        if ev.evidence_id in texts:
+            continue
+        alias = f"E{len(aliases) + 1}"
+        aliases[alias] = ev.evidence_id
+        alias_of[ev.evidence_id] = alias
+        texts[ev.evidence_id] = text
+        sections.append(
+            ContextSection(title=f"{path} [{alias}]", text=prompt_text, priority=priority)
+        )
+
+    cand_lines = [
+        f"- {c.path}: args {list(c.arg_names)}" + ("" if c.has_main_guard else " (no main guard)")
+        for c in scan.candidates
+    ] or ["(none found)"]
+    listed = [*inv.python_files, *inv.config_files][:_MAX_LISTED_FILES]
+    other_facts = [_fact_line(ev) for ev in facts if ev.content.get("parser") != "entrypoint"]
+    fact_text = "\n".join(
+        [
+            "Entrypoint candidates (path: argument names):",
+            *cand_lines,
+            "Python and config files in the repo:",
+            *(f"- {p}" for p in listed),
+            *(["Parsed facts:", *other_facts] if other_facts else []),
+        ]
+    )
+    sections.append(
+        ContextSection(title="Repo facts (parsed by code)", text=fact_text, priority=90)
+    )
+
+    version_lines: list[str] = []
+    for ev in evidence.values():
+        if not (ev.locator.endswith("#versions") and ev.content.get("parser") == "versions"):
+            continue
+        alias = next((alias_of[i] for i in ev.links if i in alias_of), None)
+        if alias is None:
+            continue
+        for m in ev.content["result"]:
+            quote = str(m["quote"])[:CITATION_MAX_QUOTE_CHARS]
+            version_lines.append(f'- {m["package"]} {m["version"]} [{alias}] quote: "{quote}"')
+    version_section = ContextSection(
+        title="Verified version mentions (found by code)",
+        text="\n".join(version_lines) or "(none found)",
+        priority=95,
+    )
+
+    metric_lines: list[str] = []
+    metric_line_evidence: dict[str, str] = {}  # path -> '<path>#metric_lines' evidence_id
+    for ev in evidence.values():
+        if not (
+            ev.locator.endswith("#metric_lines") and ev.content.get("parser") == "metric_lines"
+        ):
+            continue
+        result = ev.content["result"]
+        if not result or not any(i in alias_of for i in ev.links) or ev.evidence_id in texts:
+            continue
+        # citable on its own: text = the verified lines, one per line, with a new alias
+        alias = f"E{len(aliases) + 1}"
+        aliases[alias] = ev.evidence_id
+        alias_of[ev.evidence_id] = alias
+        texts[ev.evidence_id] = "\n".join(str(m["line"]) for m in result)
+        metric_line_evidence[ev.locator.removesuffix("#metric_lines")] = ev.evidence_id
+        for m in result:
+            line = str(m["line"])[:CITATION_MAX_QUOTE_CHARS]
+            metric_lines.append(f'- {m["path"]}:{m["line_no"]} [{alias}] quote: "{line}"')
+    by_script: dict[str, list[str]] = {}
+    command_evidence_ids: dict[str, set[str]] = {}  # candidate path -> '#commands' ids
+    for ev in evidence.values():
+        if not (ev.locator.endswith("#commands") and ev.content.get("parser") == "commands"):
+            continue
+        result = ev.content["result"]
+        if not result or not any(i in alias_of for i in ev.links) or ev.evidence_id in texts:
+            continue
+        alias = f"E{len(aliases) + 1}"
+        aliases[alias] = ev.evidence_id
+        alias_of[ev.evidence_id] = alias
+        texts[ev.evidence_id] = "\n".join(str(c["line"]) for c in result)
+        for c in result:
+            command_evidence_ids.setdefault(str(c["path"]), set()).add(ev.evidence_id)
+            by_script.setdefault(str(c["path"]), []).append(
+                f'- [{alias}] "{str(c["line"])[:CITATION_MAX_QUOTE_CHARS]}"'
+            )
+    command_lines: list[str] = []
+    for script in sorted(by_script):
+        command_lines += [f"{script}:", *by_script[script]]
+    shown_cmds = command_lines[:_MAX_METRIC_LINES_SHOWN]
+    if len(command_lines) > len(shown_cmds):
+        shown_cmds.append(f"[... {len(command_lines) - len(shown_cmds)} more lines]")
+    command_section = ContextSection(
+        title="Verified example commands (found by code)",
+        text="\n".join(shown_cmds) or "(none found)",
+        priority=95,
+    )
+
+    shown = metric_lines[:_MAX_METRIC_LINES_SHOWN]
+    if len(metric_lines) > len(shown):
+        shown.append(f"[... {len(metric_lines) - len(shown)} more lines]")
+    metric_section = ContextSection(
+        title="Verified metric output lines (found by code)",
+        text="\n".join(shown) or "(none found)",
+        priority=95,
+    )
+
+    context: dict[str, Any] = {
+        "repo_files": frozenset(f.path for f in inv.files),
+        "evidence_ids": frozenset(texts),
+        "texts": texts,
+        "entrypoint_args": {c.path: frozenset(c.arg_names) for c in scan.candidates},
+        "aliases": aliases,
+        "evidence_kinds": {i: evidence[i].kind for i in texts},
+        "metric_line_evidence": metric_line_evidence,
+        "command_evidence": {p: frozenset(ids) for p, ids in command_evidence_ids.items()},
+    }
+    packed: dict[SubtaskKind, str] = {
+        "A": pack_context([*sections, version_section], max_chars),
+        "B": pack_context([*sections, command_section], max_chars),
+        "C": pack_context([*sections, metric_section], max_chars),
+    }
+    return context, packed
+
+
+@dataclass(frozen=True)
+class SubtaskOutcome:
+    kind: SubtaskKind
+    ok: bool
+    value: EnvSpec | EntrypointList | WorkflowAnalysis | None
+    evidence: tuple[Evidence, ...]
+    events: tuple[UnknownOpened, ...]
+    errors: tuple[str, ...]
+    attempts: int
+    dropped_unknowns: tuple[str, ...] = ()  # "<pkg>_version" dropped: version was cited
+
+
+def _cited_ids(obj: Any) -> set[str]:
+    if isinstance(obj, Citation):
+        return {obj.evidence_id}
+    if isinstance(obj, BaseModel):
+        return set().union(*(_cited_ids(getattr(obj, f)) for f in type(obj).model_fields))
+    if isinstance(obj, (tuple, list)):
+        return set().union(*(_cited_ids(v) for v in obj))
+    return set()
+
+
+def _drop_cited_version_unknowns(value: BaseModel) -> tuple[Any, tuple[str, ...]]:
+    """Drop "<pkg>_version" unknowns whose package has a cited version in the same output."""
+    if not isinstance(value, EnvSpec):
+        return value, ()
+    cited = {
+        _PKG_CANONICAL.get(p.name.strip().lower(), p.name.strip().lower())
+        for p in (value.python, *value.packages)
+        if p is not None and p.version is not None and p.citation is not None
+    }
+    keep = tuple(u for u in value.unknowns if u.name.removesuffix("_version") not in cited)
+    dropped = tuple(u.name for u in value.unknowns if u not in keep)
+    return (value.model_copy(update={"unknowns": keep}) if dropped else value), dropped
+
+
+def run_subtask(
+    kind: SubtaskKind,
+    llm: LLM,
+    context: Mapping[str, Any],
+    packed: str,
+    *,
+    source: str,
+    existing_unknown_ids: set[str],
+    max_tokens: int,
+    max_retries: int = 2,
+) -> SubtaskOutcome:
+    """One gated LLM subtask. On success: one derived/llm Evidence linked to every cited
+    evidence_id (full ids; aliases are resolved during validation), plus UnknownOpened for
+    each proposal not already open (first wins). Unknown names are limited per subtask
+    (ALLOWED_UNKNOWNS, passed as context["allowed_unknowns"]); "<pkg>_version" unknowns are
+    dropped when the same output cites that package's version. BudgetExceeded / LLMError
+    (incl. ContextTooLong) propagate."""
+    if kind not in _SUBTASKS:
+        raise ValueError(f"unknown subtask kind {kind!r}")
+    for key in _REQUIRED_MAP_CONTEXT:
+        if not isinstance(context.get(key), Mapping):
+            raise ValueError(f"run_subtask: validation context key {key!r} must be a mapping")
+    schema, system, ev_kind = _SUBTASKS[kind]
+    result = gated_call(
+        llm,
+        system=system,
+        prompt=f"{packed}\n\nReturn the JSON now.",
+        schema=schema,
+        context={**context, "allowed_unknowns": ALLOWED_UNKNOWNS[kind]},
+        max_tokens=max_tokens,
+        max_retries=max_retries,
+        required_context=_REQUIRED_SET_CONTEXT,
+        examples=SUBTASK_EXAMPLES,
+    )
+    if not result.ok or result.value is None:
+        return SubtaskOutcome(kind, False, None, (), (), result.errors, result.attempts)
+
+    value, dropped = _drop_cited_version_unknowns(result.value)
+    ev = make_evidence(
+        kind=ev_kind,
+        source=source,
+        locator=f"subtask:{kind}",
+        content=value.model_dump(mode="json"),
+        confidence="derived",
+        authority="llm",
+        links=sorted(_cited_ids(value)),
+    )
+    seen = set(existing_unknown_ids)
+    events: list[UnknownOpened] = []
+    for prop in value.unknowns:  # type: ignore[attr-defined]
+        uid = unknown_id_for(prop.name)
+        if uid in seen:
+            continue
+        seen.add(uid)
+        events.append(UnknownOpened(unknown_id=uid, name=prop.name, evidence_id=ev.evidence_id))
+    return SubtaskOutcome(
+        kind,
+        True,
+        value,  # type: ignore[arg-type]
+        (ev,),
+        tuple(events),
+        result.errors,
+        result.attempts,
+        dropped,
+    )
+
+
+# --------------------------------------------------------------------------- graph nodes
+
+
+def _subtask_node(
+    kind: SubtaskKind, state: Mapping[str, Any], deps: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run one gated subtask on the configure evidence in the state. Returns evidence,
+    events and one SubtaskSummary; writes only LLM telemetry (on_record). BudgetExceeded /
+    LLMError become a failed summary so the other branches' evidence is still persisted."""
+    evidence = {ev.evidence_id: ev for ev in state["evidence"]}
+    facts, scan = load_repo_facts(evidence)
+    context, packed = build_subtask_context(
+        evidence, facts, scan, max_chars=state.get("max_chars", 12_000)
+    )
+    existing = {e.unknown_id for e in state.get("events", ()) if isinstance(e, UnknownOpened)}
+    llm = deps["llm_for"](f"subtask_{kind.lower()}")
+    llm.on_record = deps["store"].append_call_record
+    try:
+        out = run_subtask(
+            kind,
+            llm,
+            context,
+            packed[kind],
+            source=state["source"],
+            existing_unknown_ids=existing,
+            max_tokens=state.get("max_tokens", 1_500),
+        )
+        ok, attempts, errors = out.ok, out.attempts, out.errors
+        new_evidence, events = list(out.evidence), list(out.events)
+    except (BudgetExceeded, LLMError) as e:
+        ok, attempts, errors = False, len(llm.records()) + 1, (f"{type(e).__name__}: {e}",)
+        new_evidence, events = [], []
+    records = llm.records()
+    summary = SubtaskSummary(
+        kind=kind,
+        ok=ok,
+        attempts=attempts,
+        tokens=sum(r.input_tokens + r.output_tokens for r in records),
+        latency_s=sum(r.latency_s for r in records),
+        errors=errors,
+    )
+    return {"evidence": new_evidence, "events": events, "outcomes": [summary]}
+
+
+def subtask_a(state: Mapping[str, Any], deps: Mapping[str, Any]) -> dict[str, Any]:
+    return _subtask_node("A", state, deps)
+
+
+def subtask_b(state: Mapping[str, Any], deps: Mapping[str, Any]) -> dict[str, Any]:
+    return _subtask_node("B", state, deps)
+
+
+def subtask_c(state: Mapping[str, Any], deps: Mapping[str, Any]) -> dict[str, Any]:
+    return _subtask_node("C", state, deps)

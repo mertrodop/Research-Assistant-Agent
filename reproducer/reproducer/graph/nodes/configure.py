@@ -1,6 +1,8 @@
-"""Configure node (pure): classify a repo's file list and turn it into evidence.
+"""Configure node: classify a repo's file list and turn it into evidence.
 
-No IO here: file listings and file texts are produced by providers/git.py and passed in.
+The helpers are pure: file listings and file texts are produced by providers/git.py and
+passed in. Only the graph node `configure` does IO (clone/reuse + reads, via providers);
+it returns evidence in the state and writes nothing to the run store (persist does).
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ import fnmatch
 import hashlib
 import re
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from reproducer.domain.evidence import Evidence, make_evidence
@@ -127,3 +130,75 @@ def repo_source(url: str, sha: str) -> str:
     """'https://github.com/openai/CLIP.git' + sha -> 'repo:openai/CLIP@<sha>'."""
     owner, name = parse_github_url(url)
     return f"repo:{owner}/{name}@{sha}"
+
+
+def configure(state: Mapping[str, Any], deps: Mapping[str, Any]) -> dict[str, Any]:
+    """Graph node: clone (or reuse <out_dir>/repo), inventory, extractors, shell scripts,
+    version/metric/command scans. Returns evidence + the store's existing unknown events
+    (so subtasks skip already-open unknowns). Raises ValueError / CloneError on bad input."""
+    # imported here: subtasks imports this module (MAX_CONFIG_BYTES)
+    from reproducer.graph.nodes.subtasks import (
+        MAX_SHELL_SCRIPTS,
+        collect_texts,
+        command_evidence,
+        extract_repo_facts,
+        file_evidence,
+        is_shell_script,
+        metric_line_evidence,
+        version_evidence,
+    )
+    from reproducer.providers.git import (
+        CloneError,
+        clone_repo,
+        head_sha,
+        list_files,
+        read_text,
+        validate_commit,
+    )
+
+    url, commit = state["repo_url"], state.get("commit")
+    parse_github_url(url)
+    if commit is not None:
+        validate_commit(commit)
+    repo_dir = Path(state["out_dir"]) / "repo"
+    if repo_dir.exists():  # reuse-clone semantics
+        sha = head_sha(repo_dir)
+        if commit is not None and sha != commit:
+            raise CloneError(
+                f"{repo_dir} is at {sha}, not the requested commit {commit}; use a fresh --out"
+            )
+    else:
+        sha = clone_repo(url, repo_dir, commit=commit)
+    source = repo_source(url, sha)
+
+    inv = classify_files(list_files(repo_dir), sha)
+    texts: dict[str, tuple[str, bool]] = {}
+    for path in ([inv.readme] if inv.readme else []) + [*inv.requirement_files, *inv.docker_files]:
+        try:
+            texts[path] = read_text(repo_dir, path)
+        except (ValueError, OSError):
+            continue  # unsafe/unreadable: still listed in the inventory
+    evidence: dict[str, Evidence] = {}
+    for ev in inventory_to_evidence(inv, source, texts):
+        evidence.setdefault(ev.evidence_id, ev)
+    for ev in extract_repo_facts(inv, collect_texts(repo_dir, inv), source):
+        evidence.setdefault(ev.evidence_id, ev)
+    scripts = [f.path for f in inv.files if not f.is_symlink and is_shell_script(f.path)]
+    for path in scripts[:MAX_SHELL_SCRIPTS]:
+        try:
+            text, truncated = read_text(repo_dir, path)
+        except (ValueError, OSError):
+            continue
+        ev = file_evidence(source, path, text, truncated)
+        evidence.setdefault(ev.evidence_id, ev)
+    scans = (*version_evidence(evidence), *metric_line_evidence(evidence))
+    scans += command_evidence(evidence)
+    for ev in scans:
+        evidence.setdefault(ev.evidence_id, ev)
+    return {
+        "source": source,
+        "evidence": list(evidence.values()),
+        "events": list(deps["store"].load_events()),
+        "status": "running",
+        "configure_attempts": state.get("configure_attempts", 0) + 1,
+    }

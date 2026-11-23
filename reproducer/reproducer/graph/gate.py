@@ -37,12 +37,25 @@ def strip_fence(text: str) -> str:
     return m.group(1).strip() if m else s
 
 
-def summarize_errors(exc: ValidationError) -> str:
-    """One 'loc: msg' line per error (loc dotted; '(root)' for model-level errors)."""
+def summarize_errors(exc: ValidationError, examples: Mapping[str, str] | None = None) -> str:
+    """One 'loc: msg' line per error (loc dotted; '(root)' for model-level errors).
+
+    `examples` maps a field name to a short correct-shape example. For each error, the
+    innermost field name in its loc that has an example adds one "  e.g. <example>" line
+    (each example at most once per summary, to keep the feedback brief).
+    """
     lines = []
+    shown: set[str] = set()
     for err in exc.errors(include_url=False):
         loc = ".".join(str(p) for p in err["loc"]) or "(root)"
         lines.append(f"{loc}: {err['msg']}")
+        if examples:
+            key = next(
+                (p for p in reversed(err["loc"]) if isinstance(p, str) and p in examples), None
+            )
+            if key is not None and key not in shown:
+                shown.add(key)
+                lines.append(f"  e.g. {key}: {examples[key]}")
     return "\n".join(lines)
 
 
@@ -63,10 +76,12 @@ def gated_call(
     max_tokens: int,
     max_retries: int = 2,
     required_context: Iterable[str] = ("repo_files",),
+    examples: Mapping[str, str] | None = None,
 ) -> GateResult[T]:
     """Call llm until its JSON validates as `schema` under `context` (1 + max_retries tries).
 
     Missing `required_context` keys are a programming error: ValueError before any LLM call.
+    `examples` (field name -> short example) is appended to the retry feedback.
     """
     if max_retries < 0:
         raise ValueError("max_retries must be >= 0")
@@ -85,7 +100,7 @@ def gated_call(
         try:
             value = schema.model_validate_json(strip_fence(resp.text), context=dict(context))
         except ValidationError as e:  # covers invalid JSON (json_invalid) and grounding
-            errors.append(summarize_errors(e)[:MAX_ERROR_CHARS])
+            errors.append(summarize_errors(e, examples)[:MAX_ERROR_CHARS])
             current = _feedback_prompt(prompt, errors[-1], resp.text)
             continue
         return GateResult(ok=True, value=value, attempts=attempt, errors=tuple(errors))

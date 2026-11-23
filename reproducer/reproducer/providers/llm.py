@@ -9,7 +9,8 @@ Selection is config-only: REPRODUCER_LLM_<NODE> or REPRODUCER_LLM = "<backend>:<
 backend one of ollama | openai | openrouter | fake, e.g.
   REPRODUCER_LLM_CRITIC=openrouter:meta-llama/llama-3.1-8b-instruct:free
 Env per backend:
-  ollama      OLLAMA_HOST, OLLAMA_NUM_CTX
+  ollama      OLLAMA_HOST, OLLAMA_NUM_CTX (default 8192; always sent; a call whose estimated
+              size exceeds it raises ContextTooLong before any request)
   openai      OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_JSON_MODE (schema|object|none)
   openrouter  OPENROUTER_BASE_URL, OPENROUTER_API_KEY (required), OPENROUTER_JSON_MODE
 MeteredLLM enforces a shared token / wall-clock Budget and records one CallRecord per call
@@ -58,6 +59,14 @@ class LLMError(RuntimeError):
         detail = f" (HTTP {status})" if status is not None else ""
         excerpt = f": {self.body}" if self.body else ""
         super().__init__(f"{message}{detail}{excerpt}")
+
+
+class ContextTooLong(LLMError):
+    """Estimated prompt + max_tokens would not fit the model context (no call was made)."""
+
+
+# Conservative chars-per-token estimate used for the pre-call context check.
+CHARS_PER_TOKEN_ESTIMATE = 3.5
 
 
 class BudgetExceeded(RuntimeError):
@@ -208,6 +217,13 @@ class OllamaLLM:
         max_tokens: int,
         json_schema: dict | None = None,
     ) -> LLMResponse:
+        estimate = len(system + prompt) / CHARS_PER_TOKEN_ESTIMATE + max_tokens
+        if estimate > self.num_ctx:
+            raise ContextTooLong(
+                f"estimated {estimate:.0f} tokens (prompt ~{len(system + prompt)} chars / "
+                f"{CHARS_PER_TOKEN_ESTIMATE} + max_tokens {max_tokens}) > num_ctx {self.num_ctx}; "
+                "raise OLLAMA_NUM_CTX or shrink the prompt"
+            )
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [

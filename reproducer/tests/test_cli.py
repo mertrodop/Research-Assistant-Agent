@@ -1,10 +1,12 @@
-"""Tests for `python -m reproducer.cli inventory` (offline: clones come from a local repo)."""
+"""Tests for `python -m reproducer.cli inventory`, `subtasks` and `configure` (offline by
+default; one llm_live test)."""
 
 from __future__ import annotations
 
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -179,3 +181,311 @@ def test_bad_commit_rejected_before_git(
 def test_non_github_url_rejected(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["inventory", "https://gitlab.com/a/b", "--out", str(tmp_path / "o")]) == 2
     assert "GitHub" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- subtasks
+
+
+def _fake_llm_for_node(answers: dict[str, Any]) -> Any:
+    """llm_for_node replacement: FakeLLM answering per node, metered on the shared budget."""
+    import json
+    import re
+
+    from reproducer.providers.llm import FakeLLM, MeteredLLM
+
+    def factory(node: str, budget: Any) -> MeteredLLM:
+        def respond(system: str, prompt: str) -> str:
+            ids = dict(re.findall(r"## (\S+) \[(E\d+)\]", prompt))  # path -> alias
+            return json.dumps(answers[node](ids))
+
+        return MeteredLLM(FakeLLM(respond), budget, node)
+
+    return factory
+
+
+def test_subtasks_appends_evidence_events_and_call_records(
+    cloned_out: tuple[Path, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import reproducer.cli as cli
+    from reproducer.domain.unknowns import UnknownOpened
+
+    out, _, _ = cloned_out
+    assert main(["inventory", URL, "--out", str(out), "--reuse-clone"]) == 0
+    answers = {
+        "subtask_a": lambda ids: {
+            "packages": [
+                {
+                    "name": "numpy",
+                    "version": None,
+                    "citation": {"evidence_id": ids["requirements.txt"], "quote": "numpy"},
+                }
+            ],
+            "unknowns": [{"name": "python_version", "why": "not stated"}],
+        },
+        "subtask_b": lambda ids: {"entrypoints": []},  # repo has no candidates -> fails
+        "subtask_c": lambda ids: {"unknowns": [{"name": "dataset_source", "why": "not given"}]},
+    }
+    monkeypatch.setattr(cli, "llm_for_node", _fake_llm_for_node(answers))
+    capsys.readouterr()
+    assert main(["subtasks", "--out", str(out)]) == 1  # B failed
+    text = capsys.readouterr().out
+    assert "A env           ok=True attempts=1" in text
+    assert "B entrypoints   ok=False attempts=3" in text
+    assert "C workflow      ok=True attempts=1" in text
+
+    store = RunStore(out)
+    stored = list(store.load_evidence().values())
+    kinds = [ev.kind for ev in stored]
+    assert kinds.count("env_spec") == 1 and kinds.count("workflow") == 1
+    assert "entrypoints" not in kinds
+    env = next(ev for ev in stored if ev.kind == "env_spec")
+    req_id = next(ev.evidence_id for ev in stored if ev.locator == "requirements.txt")
+    assert env.content["packages"][0]["source"] == "repo_file"
+    assert env.content["packages"][0]["citation"]["evidence_id"] == req_id  # alias resolved
+    assert env.links == (req_id,)
+    assert {ev.locator for ev in stored} >= {"README.md#versions", "requirements.txt#versions"}
+    events = store.load_events()
+    opened = [e.unknown_id for e in events if isinstance(e, UnknownOpened)]
+    assert opened == ["unk:python_version", "unk:dataset_source"]
+    nodes = [r.node for r in store.load_call_records()]
+    assert nodes == ["subtask_a", "subtask_b", "subtask_b", "subtask_b", "subtask_c"]
+
+    # rerun: same answers -> same evidence ids (deduped), no re-opened unknowns
+    n_lines = _evidence_lines(out)
+    main(["subtasks", "--out", str(out)])
+    assert _evidence_lines(out) == n_lines
+    assert len(store.load_events()) == 2
+
+
+def test_subtasks_without_store_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["subtasks", "--out", str(tmp_path / "none")]) == 2
+    assert "run `inventory` first" in capsys.readouterr().err
+
+
+def test_inventory_stores_shell_scripts_and_subtasks_finds_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import reproducer.cli as cli
+
+    src = tmp_path / "src"
+    (src / "scripts").mkdir(parents=True)
+    _git(src, "init", "-q", "-b", "main")
+    (src / "README.md").write_text("# p\n")
+    (src / "train.py").write_text(
+        "import argparse\np = argparse.ArgumentParser()\np.add_argument('--epochs')\n"
+    )
+    (src / "scripts" / "run.sh").write_text("python train.py \\\n  --epochs 3\n")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-q", "-m", "c")
+    out = tmp_path / "runs" / "p"
+    clone_repo(src.as_uri(), out / "repo")
+    assert main(["inventory", URL, "--out", str(out), "--reuse-clone"]) == 0
+    assert "shell scripts: 1 found, 1 written" in capsys.readouterr().out
+
+    answers = {
+        "subtask_a": lambda ids: {},
+        "subtask_b": lambda ids: {
+            "entrypoints": [
+                {
+                    "path": "train.py",
+                    "kind": "train",
+                    "example": {"evidence_id": ids["Verified"], "quote": "--epochs 3"},
+                }
+            ]
+        },
+        "subtask_c": lambda ids: {},
+    }
+
+    def ids_with_commands(factory: Any) -> Any:
+        import re
+
+        def wrapped(node: str, budget: Any) -> Any:
+            m = factory(node, budget)
+            inner = m.inner._fn
+
+            def fn(system: str, prompt: str) -> str:
+                alias = re.search(r"- \[(E\d+)\] \"python train.py --epochs 3\"", prompt)
+                return inner(
+                    system, prompt + (f"\n## Verified [{alias.group(1)}]" if alias else "")
+                )
+
+            m.inner._fn = fn
+            return m
+
+        return wrapped
+
+    monkeypatch.setattr(cli, "llm_for_node", ids_with_commands(_fake_llm_for_node(answers)))
+    assert main(["subtasks", "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "commands:       1 found by code" in text
+    assert "train.py kind=train args=['--epochs'] example=True" in text
+    stored = RunStore(out).load_evidence().values()
+    cmd_ev = next(ev for ev in stored if ev.locator == "scripts/run.sh#commands")
+    assert cmd_ev.content["result"][0]["line"] == "python train.py --epochs 3"
+    b = next(ev for ev in stored if ev.kind == "entrypoints")
+    assert b.links == (cmd_ev.evidence_id,)
+
+
+# --------------------------------------------------------------------------- configure
+
+
+def _configure_fixture(tmp_path: Path) -> Path:
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    (src / "README.md").write_text("# demo\n")
+    (src / "requirements.txt").write_text("numpy\n")
+    (src / "train.py").write_text(
+        "import argparse\np = argparse.ArgumentParser()\np.add_argument('--epochs')\n"
+        "if __name__ == '__main__':\n    p.parse_args()\n"
+    )
+    _git(src, "add", "-A")
+    _git(src, "commit", "-q", "-m", "c")
+    out = tmp_path / "runs" / "demo"
+    clone_repo(src.as_uri(), out / "repo")
+    return out
+
+
+_CONFIGURE_ANSWERS: dict[str, Any] = {
+    "subtask_a": lambda ids: {
+        "packages": [
+            {
+                "name": "numpy",
+                "version": None,
+                "citation": {"evidence_id": ids["requirements.txt"], "quote": "numpy"},
+            }
+        ],
+        "unknowns": [{"name": "python_version", "why": "not stated"}],
+    },
+    "subtask_b": lambda ids: {"entrypoints": [{"path": "train.py", "kind": "train"}]},
+    "subtask_c": lambda ids: {"unknowns": [{"name": "dataset_source", "why": "not given"}]},
+}
+
+
+def test_configure_runs_graph_and_reruns_idempotently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import reproducer.cli as cli
+
+    out = _configure_fixture(tmp_path)
+    monkeypatch.setattr(cli, "llm_for_node", _fake_llm_for_node(_CONFIGURE_ANSWERS))
+    assert main(["configure", URL, "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "status:         configured" in text
+    for line in ("A env           ok=True attempts=1", "B entrypoints   ok=True attempts=1"):
+        assert line in text
+    assert "C workflow      ok=True attempts=1" in text
+    n = _evidence_lines(out)
+    assert f"evidence:       {n} written ({n} in state)" in text
+    assert "events:         2 written" in text and "wall time:" in text
+    kinds = [ev.kind for ev in RunStore(out).load_evidence().values()]
+    assert kinds.count("env_spec") == kinds.count("entrypoints") == kinds.count("workflow") == 1
+
+    assert main(["configure", URL, "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert f"evidence:       0 written ({n} in state)" in text
+    assert "events:         0 written" in text
+    assert _evidence_lines(out) == n
+
+
+def test_configure_failed_subtask_exit_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import reproducer.cli as cli
+
+    out = _configure_fixture(tmp_path)
+    answers = {**_CONFIGURE_ANSWERS, "subtask_b": lambda ids: {"entrypoints": []}}
+    monkeypatch.setattr(cli, "llm_for_node", _fake_llm_for_node(answers))
+    assert main(["configure", URL, "--out", str(out)]) == 1
+    text = capsys.readouterr().out
+    assert "status:         configure_failed" in text
+    assert "B entrypoints   ok=False attempts=3" in text
+    assert "  error attempt 1:" in text
+    kinds = {ev.kind for ev in RunStore(out).load_evidence().values()}
+    assert {"env_spec", "workflow"} <= kinds and "entrypoints" not in kinds
+
+
+def test_configure_without_llm_config_errors_before_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for var in [v for v in os.environ if v.startswith("REPRODUCER_LLM")]:
+        monkeypatch.delenv(var)
+    out = tmp_path / "o"
+    assert main(["configure", URL, "--out", str(out)]) == 2
+    assert "no LLM configured" in capsys.readouterr().err
+    assert not out.exists()
+
+
+CUTOUT_URL = "https://github.com/uoguelph-mlrg/Cutout"
+CUTOUT_CLONE = Path(__file__).resolve().parents[1] / "runs" / "cutout" / "repo"
+
+
+@pytest.mark.llm_live
+def test_live_configure_cutout_reuses_clone(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Configure graph on Cutout with the configured backend (REPRODUCER_LLM*), reusing a
+    copy of runs/cutout/repo (no network clone)."""
+    import shutil
+
+    if not (CUTOUT_CLONE / ".git").is_dir():
+        pytest.skip(f"no Cutout clone at {CUTOUT_CLONE}")
+    if not os.environ.get("REPRODUCER_LLM"):
+        pytest.skip("REPRODUCER_LLM not set")
+    out = tmp_path / "cutout"
+    shutil.copytree(CUTOUT_CLONE, out / "repo", symlinks=True)
+    rc = main(["configure", CUTOUT_URL, "--out", str(out)])
+    text = capsys.readouterr().out
+    print(text)
+    assert rc == 0, text
+    assert "status:         configured" in text
+    kinds = {ev.kind for ev in RunStore(out).load_evidence().values()}
+    assert {"env_spec", "entrypoints", "workflow"} <= kinds
+    b = next(ev for ev in RunStore(out).load_evidence().values() if ev.kind == "entrypoints")
+    assert [e["path"] for e in b.content["entrypoints"]] == ["train.py"]
+
+
+def test_subtasks_prompts_independent_of_store_order_and_match_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import shutil
+
+    import reproducer.cli as cli
+
+    src = tmp_path / "src"
+    (src / "configs").mkdir(parents=True)
+    _git(src, "init", "-q", "-b", "main")
+    (src / "README.md").write_text("# p\nRun `python train.py --epochs 3`\n")
+    (src / "requirements.txt").write_text("numpy\n")
+    (src / "requirements-dev.txt").write_text("pytest\n")
+    (src / "run.sh").write_text("python train.py --epochs 3\n")
+    (src / "configs" / "a.yaml").write_text("lr: 0.1\n")
+    (src / "configs" / "b.yaml").write_text("bs: 8\n")
+    (src / "train.py").write_text(
+        "import argparse\np = argparse.ArgumentParser()\np.add_argument('--epochs')\n"
+        "if __name__ == '__main__':\n    p.parse_args()\n"
+    )
+    _git(src, "add", "-A")
+    _git(src, "commit", "-q", "-m", "c")
+    outs = [tmp_path / "runs" / n for n in ("fwd", "rev", "graph")]
+    clone_repo(src.as_uri(), outs[0] / "repo")
+    for out in outs[1:]:
+        shutil.copytree(outs[0] / "repo", out / "repo", symlinks=True)
+
+    assert main(["inventory", URL, "--out", str(outs[0]), "--reuse-clone"]) == 0
+    lines = (outs[0] / EVIDENCE_FILE).read_text().splitlines()
+    (outs[1] / EVIDENCE_FILE).write_text("\n".join(reversed(lines)) + "\n")  # same set
+
+    monkeypatch.setattr(cli, "llm_for_node", _fake_llm_for_node(_CONFIGURE_ANSWERS))
+    main(["subtasks", "--out", str(outs[0])])
+    main(["subtasks", "--out", str(outs[1])])
+    main(["configure", URL, "--out", str(outs[2])])
+    capsys.readouterr()
+
+    def prompts(out: Path) -> list[tuple[str, str]]:
+        return sorted((r.node, r.prompt_sha256) for r in RunStore(out).load_call_records())
+
+    assert prompts(outs[0]) == prompts(outs[1]) == prompts(outs[2])
+    assert {n for n, _ in prompts(outs[0])} == {"subtask_a", "subtask_b", "subtask_c"}
