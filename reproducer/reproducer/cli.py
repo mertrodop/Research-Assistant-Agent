@@ -3,13 +3,16 @@
     python -m reproducer.cli inventory <github-url> [--commit SHA] --out runs/<name>
 
 Clones into <out>/repo (never executes anything from it), classifies the files, reads the
-README and requirement/docker files, and appends evidence to RunStore(<out>).
+README and requirement/docker files, and appends evidence to RunStore(<out>). Then runs
+the deterministic extractors (requirements, setup.py, pyproject, environment.yml, config
+keys, entrypoint candidates; ast/safe loaders only) and appends derived evidence.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -19,6 +22,7 @@ from reproducer.graph.nodes.configure import (
     parse_github_url,
     repo_source,
 )
+from reproducer.graph.nodes.subtasks import collect_texts, extract_repo_facts
 from reproducer.providers.git import (
     CloneError,
     clone_repo,
@@ -64,7 +68,8 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
         except (ValueError, OSError) as e:
             print(f"warning: skipped {path}: {e}", file=sys.stderr)
 
-    evidence = inventory_to_evidence(inv, repo_source(args.url, sha), texts)
+    source = repo_source(args.url, sha)
+    evidence = inventory_to_evidence(inv, source, texts)
     store = RunStore(out)
     written = sum(store.append_evidence(ev) for ev in evidence)
 
@@ -79,6 +84,19 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
     print(f"submodules:    {inv.has_submodules}")
     print(f"readme:        {inv.readme}")
     print(f"evidence:      {written} written ({len(evidence)} built) -> {store.evidence_path}")
+
+    facts = extract_repo_facts(inv, collect_texts(repo_dir, inv, args.max_py_files), source)
+    derived = [ev for ev in facts if ev.confidence == "derived"]
+    observed = [ev for ev in facts if ev.confidence == "observed"]
+    obs_written = sum(store.append_evidence(ev) for ev in observed)
+    der_written = sum(store.append_evidence(ev) for ev in derived)
+    by_parser = Counter(ev.content["parser"] for ev in derived)
+    counts = " ".join(f"{k}={by_parser[k]}" for k in sorted(by_parser)) or "none"
+    print(f"extracted:     {counts}")
+    print(
+        f"derived:       {der_written} written ({len(derived)} built), "
+        f"+{obs_written} source-file records"
+    )
     return 0
 
 
@@ -96,6 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
         "and rebuild the inventory from it instead of cloning",
     )
     inv.add_argument("--timeout", type=int, default=300, help="clone timeout in seconds")
+    inv.add_argument(
+        "--max-py-files",
+        type=int,
+        default=50,
+        help="max Python files scanned for entrypoints (train/eval/main/run names first)",
+    )
     inv.set_defaults(func=_cmd_inventory)
     return parser
 

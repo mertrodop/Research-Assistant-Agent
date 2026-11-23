@@ -75,6 +75,64 @@ def test_reuse_clone_rerun_writes_no_new_evidence(
     assert sources == {f"repo:org/proj@{second}"}
 
 
+def test_inventory_stores_derived_facts_without_executing_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sentinel = tmp_path / "SENTINEL"
+    src = tmp_path / "src"
+    (src / "configs").mkdir(parents=True)
+    (src / "README.md").write_text("# demo\n")
+    (src / "requirements.txt").write_text("torch>=1.7\ngit+https://github.com/x/y.git\n")
+    (src / "setup.py").write_text(
+        f"import os\nos.system('touch {sentinel}')\n"
+        "from setuptools import setup\n"
+        "setup(install_requires=['ftfy'], python_requires='>=3.7')\n"
+    )
+    (src / "train.py").write_text(
+        f"import argparse, os\nos.system('touch {sentinel}')\n"
+        "p = argparse.ArgumentParser()\np.add_argument('--lr')\n"
+        "if __name__ == '__main__':\n    p.parse_args()\n"
+    )
+    (src / "configs" / "base.yaml").write_text("model:\n  lr: 0.1\n")
+    _git(src, "init", "-q", "-b", "main")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-q", "-m", "init")
+    out = tmp_path / "runs" / "demo"
+    clone_repo(src.as_uri(), out / "repo")
+
+    assert main(["inventory", URL, "--out", str(out), "--reuse-clone"]) == 0
+    stdout = capsys.readouterr().out
+    assert "extracted:     config_keys=1 entrypoint=1 requirements_txt=1 setup_py=1" in stdout
+    # requirements.txt/setup.py already recorded by the inventory step (same ids, deduped)
+    assert "derived:       4 written (4 built), +2 source-file records" in stdout
+    assert not sentinel.exists()
+
+    derived = {
+        ev.locator: ev
+        for ev in RunStore(out).load_evidence().values()
+        if ev.confidence == "derived"
+    }
+    assert set(derived) == {
+        "requirements.txt#parsed",
+        "setup.py#parsed",
+        "train.py#parsed",
+        "configs/base.yaml#parsed",
+    }
+    setup = derived["setup.py#parsed"].content["result"]
+    assert setup["install_requires"] == ["ftfy"] and setup["python_requires"] == ">=3.7"
+    reqs = derived["requirements.txt#parsed"].content["result"]
+    assert [u["reason"] for u in reqs["unsupported"]] == ["url"]
+    assert derived["train.py#parsed"].content["result"]["arg_names"] == ["--lr"]
+    stored = RunStore(out).load_evidence()
+    assert all(link in stored for ev in derived.values() for link in ev.links)
+
+    n = _evidence_lines(out)
+    assert main(["inventory", URL, "--out", str(out), "--reuse-clone"]) == 0
+    assert "derived:       0 written (4 built), +0 source-file records" in capsys.readouterr().out
+    assert _evidence_lines(out) == n
+    assert not sentinel.exists()
+
+
 def test_reuse_clone_same_commit_ok(cloned_out: tuple[Path, str, str]) -> None:
     out, _, second = cloned_out
     assert main(["inventory", URL, "--out", str(out), "--reuse-clone", "--commit", second]) == 0
