@@ -186,3 +186,111 @@ def test_commit_mismatch_on_reused_clone_raises_and_writes_nothing(tmp_path: Pat
     with pytest.raises(CloneError, match="not the requested commit"):
         graph.invoke({"out_dir": str(out), "repo_url": URL, "commit": "b" * 40})
     assert (out / EVIDENCE_FILE).read_text() == ""
+
+
+# --------------------------------------------------------------------------- spec input
+
+FIXTURE_SPEC = Path(__file__).resolve().parents[1] / "fixtures" / "repro_spec_example.json"
+
+
+def write_spec(tmp_path: Path, name: str = "demo", **changes: Any) -> Path:
+    """Copy of the fixture spec at <tmp>/specs/<name>/spec.json (paper source paper:<name>)."""
+    data = {**json.loads(FIXTURE_SPEC.read_text()), **changes}
+    path = tmp_path / "specs" / name / "spec.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(data))
+    return path
+
+
+def run_spec_graph(out: Path, spec_path: Path, answers: Any = ANSWERS) -> dict[str, Any]:
+    budget = Budget()
+    graph = build_configure_graph(
+        {"store": RunStore(out), "llm_for": fake_llm_for(answers, budget), "budget": budget}
+    )
+    return graph.invoke(
+        {"out_dir": str(out), "spec_path": str(spec_path), "status": "running", "commit": None}
+    )
+
+
+def _ledger(out: Path, spec: Any) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    from reproducer.cli import unknowns_by_origin
+    from reproducer.domain.ledger import Tolerance, ToleranceConfig, compute_ledger
+    from reproducer.domain.unknowns import fold_unknowns
+
+    store = RunStore(out)
+    evidence, events = store.load_evidence(), store.load_events()
+    unknowns = fold_unknowns(events, evidence)  # raises on a conflicting re-open
+    tol = ToleranceConfig(default=Tolerance(abs=0.5))
+    return (
+        compute_ledger(spec.claims, evidence, unknowns, tol),
+        unknowns_by_origin(events, evidence, unknowns),
+    )
+
+
+def test_spec_drives_configure_and_ledger_is_open(tmp_path: Path) -> None:
+    out = make_fixture_repo(tmp_path)
+    spec_path = write_spec(tmp_path)
+    final = run_spec_graph(out, spec_path)
+    assert final["status"] == "configured"
+    assert final["paper_source"] == "paper:demo"
+    assert final["repo_url"] == "https://github.com/example-lab/resnet18-cifar10"
+    assert final["source"].startswith("repo:example-lab/resnet18-cifar10@")
+
+    stored = RunStore(out).load_evidence().values()
+    paper = [ev for ev in stored if ev.source == "paper:demo"]
+    assert sorted(ev.kind for ev in paper) == ["paper_claim"] * 2 + ["paper_setup"] * 3
+    assert {"env_spec", "entrypoints", "workflow"} <= {ev.kind for ev in stored}
+
+    ledger, origins = _ledger(out, final["spec"])
+    assert set(ledger) == {"c1", "c2"}
+    expected = ("unk:dataset_source", "unk:python_version", "unk:weight_decay")
+    for entry in ledger.values():
+        assert entry.status == "open" and entry.fidelity is None and entry.attempts == 0
+        assert entry.open_unknowns == expected
+        assert len(entry.evidence_ids) == 1  # its paper_claim
+    assert origins == {
+        "paper setup": ["weight_decay"],
+        "repo subtasks": ["dataset_source", "python_version"],
+    }
+
+    # idempotent re-run: nothing new written, same ledger
+    n_ev, n_events = len(_lines(out / EVIDENCE_FILE)), len(RunStore(out).load_events())
+    again = run_spec_graph(out, spec_path)
+    assert again["status"] == "configured"
+    assert again["evidence_written"] == 0 and again["events_written"] == 0
+    assert len(_lines(out / EVIDENCE_FILE)) == n_ev
+    assert len(RunStore(out).load_events()) == n_events
+    assert _ledger(out, again["spec"]) == (ledger, origins)
+
+
+def _opened(out: Path) -> list[UnknownOpened]:
+    return [e for e in RunStore(out).load_events() if isinstance(e, UnknownOpened)]
+
+
+def test_paper_null_colliding_with_subtask_proposal_opens_once(tmp_path: Path) -> None:
+    """Paper null setup 'python_version' == subtask A's proposal: opened once, by the paper
+    (ingest_spec runs first; A skips it as already open in the state)."""
+    out = make_fixture_repo(tmp_path)
+    setup = [{"name": "python_version", "value": None, "location": "", "quote": ""}]
+    final = run_spec_graph(out, write_spec(tmp_path, setup=setup))
+    assert final["status"] == "configured"
+    opened = _opened(out)
+    assert sorted(e.unknown_id for e in opened) == ["unk:dataset_source", "unk:python_version"]
+    py = next(e for e in opened if e.name == "python_version")
+    assert RunStore(out).load_evidence()[py.evidence_id].kind == "paper_setup"
+    _, origins = _ledger(out, final["spec"])
+    assert origins == {"paper setup": ["python_version"], "repo subtasks": ["dataset_source"]}
+
+
+def test_subtask_unknown_opened_first_is_not_reopened_by_paper(tmp_path: Path) -> None:
+    """Reverse order: a URL-only run opened 'python_version' from subtask A; a later spec run
+    whose paper has the same null name does not re-open it (first wins, fold stays valid)."""
+    out = make_fixture_repo(tmp_path)
+    run_graph(out)
+    first = {e.unknown_id: e for e in _opened(out)}
+    setup = [{"name": "python_version", "value": None, "location": "", "quote": ""}]
+    final = run_spec_graph(out, write_spec(tmp_path, setup=setup))
+    assert final["status"] == "configured" and final["events_written"] == 0
+    assert {e.unknown_id: e for e in _opened(out)} == first
+    _, origins = _ledger(out, final["spec"])
+    assert origins == {"paper setup": [], "repo subtasks": ["dataset_source", "python_version"]}

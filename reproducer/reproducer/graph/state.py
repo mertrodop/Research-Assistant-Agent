@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict
 
+from reproducer.domain.contracts import ReproSpec
 from reproducer.domain.evidence import Evidence
 from reproducer.domain.unknowns import Assumption, UnknownOpened, UnknownResolved
 
@@ -70,13 +71,17 @@ class SubtaskSummary(BaseModel):
 
 
 class ConfigureState(TypedDict, total=False):
-    # inputs
+    # inputs (repo_url, or spec_path from which ingest_spec sets repo_url)
     out_dir: str
     repo_url: str
+    spec_path: str
     commit: str | None
     max_chars: int
     max_tokens: int
     # produced by the graph
+    spec: ReproSpec  # set by ingest_spec
+    paper_source: str  # "paper:<spec folder name>", set by ingest_spec
+    failure_reason: str  # set when ingest_spec fails (graph ends before configure)
     source: str
     evidence: Annotated[list[Evidence], merge_evidence]
     events: Annotated[list[UnknownEventT], merge_events]

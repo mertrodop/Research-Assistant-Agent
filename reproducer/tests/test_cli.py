@@ -489,3 +489,71 @@ def test_subtasks_prompts_independent_of_store_order_and_match_graph(
 
     assert prompts(outs[0]) == prompts(outs[1]) == prompts(outs[2])
     assert {n for n, _ in prompts(outs[0])} == {"subtask_a", "subtask_b", "subtask_c"}
+
+
+# --------------------------------------------------------------------------- configure --spec
+
+FIXTURE_SPEC = Path(__file__).resolve().parent / "fixtures" / "repro_spec_example.json"
+
+
+def _spec_copy(tmp_path: Path, **changes: Any) -> Path:
+    import json
+
+    path = tmp_path / "evals" / "demo" / "spec.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({**json.loads(FIXTURE_SPEC.read_text()), **changes}))
+    return path
+
+
+def test_configure_from_spec_prints_ledger_and_unknowns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import reproducer.cli as cli
+
+    out = _configure_fixture(tmp_path)
+    spec = _spec_copy(tmp_path)
+    monkeypatch.setattr(cli, "llm_for_node", _fake_llm_for_node(_CONFIGURE_ANSWERS))
+    assert main(["configure", "--spec", str(spec), "--out", str(out), "--tol-abs", "0.3"]) == 0
+    text = capsys.readouterr().out
+    assert "status:         configured" in text
+    assert "paper:          paper:demo" in text
+    assert "repo:           https://github.com/example-lab/resnet18-cifar10" in text
+    assert "events:         3 written" in text  # weight_decay (paper) + 2 subtask proposals
+    assert "ledger:         tolerance abs=0.3 rel=None" in text
+    for cid, value in (("c1", "95.3"), ("c2", "93.1")):
+        assert (
+            f"  {cid}  metric=top1_accuracy  paper={value} %  status=open  fidelity=-  "
+            "attempts=0" in text
+        )
+    assert text.count("    open unknowns: dataset_source, python_version, weight_decay") == 2
+    assert "  paper setup:    weight_decay" in text
+    assert "  repo subtasks:  dataset_source, python_version" in text
+
+    assert main(["configure", "--spec", str(spec), "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "events:         0 written" in text and "status=open" in text
+
+
+def test_configure_spec_and_url_are_exclusive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "o"
+    assert main(["configure", "--out", str(out)]) == 2
+    assert main(["configure", URL, "--spec", "x.json", "--out", str(out)]) == 2
+    assert "either a GitHub URL or --spec" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_configure_bad_spec_fails_without_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import reproducer.cli as cli
+
+    monkeypatch.setattr(cli, "llm_for_node", _fake_llm_for_node(_CONFIGURE_ANSWERS))
+    spec = _spec_copy(tmp_path, code_links=["https://example.org/code.zip"])
+    out = tmp_path / "runs" / "demo"
+    assert main(["configure", "--spec", str(spec), "--out", str(out)]) == 1
+    captured = capsys.readouterr()
+    assert "status:         configure_failed" in captured.out
+    assert "no GitHub repository in code_links" in captured.err
+    assert not (out / "repo").exists()

@@ -3,6 +3,8 @@
     python -m reproducer.cli inventory <github-url> [--commit SHA] --out runs/<name>
     python -m reproducer.cli subtasks --out runs/<name>
     python -m reproducer.cli configure <github-url> [--commit SHA] --out runs/<name>
+    python -m reproducer.cli configure --spec evals/<name>/spec.json [--commit SHA] \
+        --out runs/<name> [--tol-abs 0.5]
 
 Clones into <out>/repo (never executes anything from it), classifies the files, reads the
 README and requirement/docker files, and appends evidence to RunStore(<out>). Then runs
@@ -18,6 +20,9 @@ events and LLM call records are appended to the store.
 `configure` runs both steps as the LangGraph configure graph (graph/build.py): clone or
 reuse <out>/repo, collect evidence, run A/B/C in parallel, then one persist step writes
 evidence + events. Status is configured only if all three subtasks succeed.
+With --spec, the ReproSpec drives the run: ingest_spec adds paper evidence and opens an
+unknown per null setup value, the repo is the spec's first GitHub code_link, and after
+persist the ledger (recomputed read-only from the store) and the open unknowns are printed.
 """
 
 from __future__ import annotations
@@ -26,13 +31,15 @@ import argparse
 import sys
 import time
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from reproducer.domain.contracts import ReproSpec
 from reproducer.domain.evidence import Evidence
 from reproducer.domain.inventory import RepoInventory
-from reproducer.domain.unknowns import UnknownOpened
+from reproducer.domain.ledger import Tolerance, ToleranceConfig, compute_ledger
+from reproducer.domain.unknowns import UnknownOpened, UnknownState, fold_unknowns
 from reproducer.graph.build import build_configure_graph
 from reproducer.graph.nodes.configure import (
     classify_files,
@@ -65,7 +72,7 @@ from reproducer.providers.git import (
     validate_commit,
 )
 from reproducer.providers.llm import Budget, BudgetExceeded, LLMError, llm_for_node
-from reproducer.providers.store import RunStore
+from reproducer.providers.store import RunStore, UnknownEventT
 
 
 def _cmd_inventory(args: argparse.Namespace) -> int:
@@ -275,11 +282,62 @@ def _cmd_subtasks(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+UNKNOWN_ORIGINS = ("paper setup", "repo subtasks")
+
+
+def unknowns_by_origin(
+    events: Sequence[UnknownEventT],
+    evidence: Mapping[str, Evidence],
+    unknowns: Mapping[str, UnknownState],
+) -> dict[str, list[str]]:
+    """Names of the open unknowns, grouped by where they were first opened: a paper_setup
+    record (paper setup) or anything else (repo subtasks). Each group sorted."""
+    first: dict[str, UnknownOpened] = {}
+    for ev in events:
+        if isinstance(ev, UnknownOpened):
+            first.setdefault(ev.unknown_id, ev)
+    groups: dict[str, list[str]] = {o: [] for o in UNKNOWN_ORIGINS}
+    for uid, st in unknowns.items():
+        if st.status != "open":
+            continue
+        kind = evidence[first[uid].evidence_id].kind
+        groups["paper setup" if kind == "paper_setup" else "repo subtasks"].append(st.name)
+    return {o: sorted(names) for o, names in groups.items()}
+
+
+def _print_ledger(spec: ReproSpec, store: RunStore, tolerance: ToleranceConfig) -> None:
+    """Read-only: ledger recomputed from the store, never written."""
+    evidence = store.load_evidence()
+    events = store.load_events()
+    unknowns = fold_unknowns(events, evidence)
+    ledger = compute_ledger(spec.claims, evidence, unknowns, tolerance)
+    tol = tolerance.default
+    print(f"ledger:         tolerance abs={tol.abs} rel={tol.rel}")
+    for claim in spec.claims:
+        entry = ledger[claim.claim_id]
+        unit = f" {claim.unit}" if claim.unit else ""
+        names = [unknowns[uid].name for uid in entry.open_unknowns]
+        print(
+            f"  {claim.claim_id}  metric={claim.metric}  paper={claim.value}{unit}  "
+            f"status={entry.status}  fidelity={entry.fidelity or '-'}  "
+            f"attempts={entry.attempts}"
+        )
+        print(f"    open unknowns: {', '.join(names) or '-'}")
+    print("open unknowns:")
+    for origin, names in unknowns_by_origin(events, evidence, unknowns).items():
+        print(f"  {origin + ':':<15} {', '.join(names) or '-'}")
+
+
 def _cmd_configure(args: argparse.Namespace) -> int:
+    if (args.url is None) == (args.spec is None):
+        print("error: give either a GitHub URL or --spec (not both)", file=sys.stderr)
+        return 2
     try:
-        parse_github_url(args.url)  # fail fast, before cloning
+        if args.url is not None:
+            parse_github_url(args.url)  # fail fast, before cloning
         if args.commit is not None:
             validate_commit(args.commit)
+        tolerance = ToleranceConfig(default=Tolerance(abs=args.tol_abs))
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -294,23 +352,32 @@ def _cmd_configure(args: argparse.Namespace) -> int:
     graph = build_configure_graph(
         {"store": store, "llm_for": lambda node: llm_for_node(node, budget), "budget": budget}
     )
+    inputs: dict[str, Any] = {
+        "out_dir": args.out,
+        "commit": args.commit,
+        "max_chars": args.max_chars,
+        "max_tokens": args.max_tokens,
+        "status": "running",
+        "configure_attempts": 0,
+    }
+    if args.spec is not None:
+        inputs["spec_path"] = args.spec
+    else:
+        inputs["repo_url"] = args.url
     start = time.monotonic()
     try:
-        final = graph.invoke(
-            {
-                "out_dir": args.out,
-                "repo_url": args.url,
-                "commit": args.commit,
-                "max_chars": args.max_chars,
-                "max_tokens": args.max_tokens,
-                "status": "running",
-                "configure_attempts": 0,
-            }
-        )
+        final = graph.invoke(inputs)
     except (CloneError, FileExistsError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     wall = time.monotonic() - start
+    if "failure_reason" in final:  # ingest_spec failed: nothing cloned or written
+        print(f"status:         {final['status']}")
+        print(f"error: {final['failure_reason']}", file=sys.stderr)
+        return 1
+    if "paper_source" in final:
+        print(f"paper:          {final['paper_source']} ({args.spec})")
+        print(f"repo:           {final['repo_url']}")
     names = {"A": "A env", "B": "B entrypoints", "C": "C workflow"}
     print(f"status:         {final['status']}")
     print(f"source:         {final['source']}")
@@ -327,6 +394,8 @@ def _cmd_configure(args: argparse.Namespace) -> int:
     print(f"events:         {final['events_written']} written")
     print(f"budget:         {budget.used_tokens} tokens used")
     print(f"wall time:      {wall:.1f}s")
+    if "spec" in final:
+        _print_ledger(final["spec"], store, tolerance)
     return 0 if final["status"] == "configured" else 1
 
 
@@ -362,7 +431,16 @@ def build_parser() -> argparse.ArgumentParser:
     st.set_defaults(func=_cmd_subtasks)
 
     cf = sub.add_parser("configure", help="run the configure graph (inventory + A/B/C)")
-    cf.add_argument("url", help="GitHub repository URL")
+    cf.add_argument("url", nargs="?", default=None, help="GitHub repository URL (or --spec)")
+    cf.add_argument(
+        "--spec",
+        default=None,
+        help="ReproSpec JSON, e.g. evals/cutout/spec.json; its first GitHub code_link is the "
+        "repo, and the ledger is printed after persist",
+    )
+    cf.add_argument(
+        "--tol-abs", type=float, default=0.5, help="default absolute tolerance for the ledger"
+    )
     cf.add_argument("--commit", default=None, help="full 40-char commit sha to check out")
     cf.add_argument("--out", required=True, help="run folder; <out>/repo is reused if present")
     cf.add_argument("--max-chars", type=int, default=12_000, help="packed prompt size cap")
