@@ -1,0 +1,44 @@
+{
+  "code_links": ["https://github.com/uoguelph-mlrg/Cutout"],
+  "datasets": ["CIFAR-10", "CIFAR-100"],
+  "claims": [
+    {
+      "claim_id": "c10plus_resnet18_cutout",
+      "metric": "test_error",
+      "value": 3.99,
+      "unit": "%",
+      "dataset": "CIFAR-10",
+      "split": "test",
+      "setting": "ResNet18 + cutout, standard augmentation (C10+)",
+      "location": "Table 1",
+      "quote": "ResNet18 + cutout 9.31 ± 0.18 3.99 ± 0.13 34.98 ± 0.29 21.96 ± 0.24 -"
+    },
+    {
+      "claim_id": "c100plus_resnet18_cutout",
+      "metric": "test_error",
+      "value": 21.96,
+      "unit": "%",
+      "dataset": "CIFAR-100",
+      "split": "test",
+      "setting": "ResNet18 + cutout, standard augmentation (C100+)",
+      "location": "Table 1",
+      "quote": "ResNet18 + cutout 9.31 ± 0.18 3.99 ± 0.13 34.98 ± 0.29 21.96 ± 0.24 -"
+    }
+  ],
+  "setup": [
+    {"name": "epochs", "value": "200", "location": "Section 4.1", "quote": "we train for 200 epochs with batches of 128 images using SGD"},
+    {"name": "batch_size", "value": "128", "location": "Section 4.1", "quote": "we train for 200 epochs with batches of 128 images using SGD"},
+    {"name": "optimizer", "value": "SGD with Nesterov momentum", "location": "Section 4.1", "quote": "using SGD, Nesterov momentum of 0.9"},
+    {"name": "momentum", "value": "0.9", "location": "Section 4.1", "quote": "Nesterov momentum of 0.9"},
+    {"name": "weight_decay", "value": "5e-4", "location": "Section 4.1", "quote": "weight decay of 5e-4"},
+    {"name": "learning_rate", "value": "0.1", "location": "Section 4.1", "quote": "The learning rate is initially set to 0.1"},
+    {"name": "lr_schedule", "value": "divide by 5 after epochs 60, 120, 160", "location": "Section 4.1", "quote": "scheduled to decrease by a factor of 5x after each of the 60th, 120th, and 160th epochs"},
+    {"name": "cutout_length_cifar10", "value": "16", "location": "Section 4.1", "quote": "a cutout size of 16 × 16 pixels to use on CIFAR-10"},
+    {"name": "cutout_length_cifar100", "value": "8", "location": "Section 4.1", "quote": "cutout size of 8 × 8 pixels for CIFAR-100"},
+    {"name": "data_augmentation", "value": "zero-pad 4, random 32x32 crop, horizontal flip p=0.5", "location": "Section 4.1", "quote": "Images are first zero-padded with 4 pixels on each side"},
+    {"name": "normalization", "value": "per-channel mean and std", "location": "Section 4.1", "quote": "normalized using per-channel mean and standard deviation"},
+    {"name": "num_runs", "value": "5", "location": "Table 1 caption", "quote": "Results averaged over five runs"},
+    {"name": "seed", "value": null, "location": "", "quote": ""},
+    {"name": "eval_checkpoint", "value": null, "location": "", "quote": ""}
+  ]
+}
