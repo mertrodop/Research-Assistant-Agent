@@ -2,10 +2,16 @@
 
 Backends:
   OllamaLLM        native Ollama /api/chat (local GPU)
-  OpenAICompatLLM  any OpenAI-compatible /chat/completions (OpenAI, Ollama's /v1, ...)
+  OpenAICompatLLM  any OpenAI-compatible /chat/completions (OpenAI, OpenRouter, ...)
   FakeLLM          deterministic, for tests
 
-Selection is config-only: REPRODUCER_LLM_<NODE> or REPRODUCER_LLM = "<backend>:<model>".
+Selection is config-only: REPRODUCER_LLM_<NODE> or REPRODUCER_LLM = "<backend>:<model>",
+backend one of ollama | openai | openrouter | fake, e.g.
+  REPRODUCER_LLM_CRITIC=openrouter:meta-llama/llama-3.1-8b-instruct:free
+Env per backend:
+  ollama      OLLAMA_HOST, OLLAMA_NUM_CTX
+  openai      OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_JSON_MODE (schema|object|none)
+  openrouter  OPENROUTER_BASE_URL, OPENROUTER_API_KEY (required), OPENROUTER_JSON_MODE
 MeteredLLM enforces a shared token / wall-clock Budget and records one CallRecord per call
 (prompt stored only as sha256).
 
@@ -33,9 +39,10 @@ from pydantic import BaseModel, ConfigDict
 
 from reproducer.domain.telemetry import CallRecord
 
-BACKENDS = ("ollama", "openai", "fake")
+BACKENDS = ("ollama", "openai", "openrouter", "fake")
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # Ollama accepts a JSON schema object in `format` since 0.5.0; older versions only "json".
 _OLLAMA_SCHEMA_MIN_VERSION = (0, 5, 0)
 _EXCERPT_CHARS = 500
@@ -248,7 +255,10 @@ JsonMode = Literal["schema", "object", "none"]
 
 
 class OpenAICompatLLM:
-    """OpenAI-compatible POST {base_url}/chat/completions."""
+    """OpenAI-compatible POST {base_url}/chat/completions.
+
+    `backend` only labels responses/CallRecords (e.g. "openrouter"); the protocol is the same.
+    """
 
     backend = "openai"
 
@@ -261,6 +271,7 @@ class OpenAICompatLLM:
         temperature: float = 0.0,
         timeout_s: float = 300,
         env: Mapping[str, str] | None = None,
+        backend: str = "openai",
     ) -> None:
         if json_mode not in ("schema", "object", "none"):
             raise ValueError(f"json_mode must be schema|object|none, got {json_mode!r}")
@@ -271,9 +282,13 @@ class OpenAICompatLLM:
         self.temperature = temperature
         self.timeout_s = timeout_s
         self._env = env  # None -> os.environ at call time; the key itself is never stored
+        self.backend = backend
 
     def __repr__(self) -> str:
-        return f"OpenAICompatLLM(base_url={self.base_url!r}, model={self.model!r})"
+        return (
+            f"OpenAICompatLLM(backend={self.backend!r}, base_url={self.base_url!r}, "
+            f"model={self.model!r})"
+        )
 
     def _headers(self) -> dict[str, str]:
         env = os.environ if self._env is None else self._env
@@ -496,7 +511,8 @@ class MeteredLLM:
 
 
 def parse_spec(spec: str) -> tuple[str, str]:
-    """'ollama:qwen2.5-coder:7b' -> ('ollama', 'qwen2.5-coder:7b'). Splits on the FIRST colon."""
+    """'ollama:qwen2.5-coder:7b' -> ('ollama', 'qwen2.5-coder:7b'). Splits on the FIRST colon,
+    so 'openrouter:meta-llama/llama-3.1-8b-instruct:free' keeps '/' and ':free' in the model."""
     backend, sep, model = spec.strip().partition(":")
     if not sep or not model:
         raise ValueError(f"LLM spec must be '<backend>:<model>', got {spec!r}")
@@ -527,6 +543,13 @@ def _points_to_ollama(base_url: str, env: Mapping[str, str]) -> bool:
     return target[1] == OLLAMA_DEFAULT_PORT or target == ollama
 
 
+def _json_mode(env: Mapping[str, str], var: str) -> JsonMode:
+    value = (env.get(var) or "schema").strip()
+    if value not in ("schema", "object", "none"):
+        raise ValueError(f"{var} must be schema|object|none, got {value!r}")
+    return value  # type: ignore[return-value]
+
+
 def make_llm(spec: str, env: Mapping[str, str]) -> LLM:
     backend, model = parse_spec(spec)
     if backend == "ollama":
@@ -547,7 +570,25 @@ def make_llm(spec: str, env: Mapping[str, str]) -> LLM:
                 f"OPENAI_BASE_URL {base_url!r} points to Ollama: use the native 'ollama:' "
                 "backend (num_ctx cannot be set via the OpenAI-compatible endpoint)"
             )
-        return OpenAICompatLLM(base_url=base_url, model=model, env=env)
+        return OpenAICompatLLM(
+            base_url=base_url,
+            model=model,
+            env=env,
+            json_mode=_json_mode(env, "OPENAI_JSON_MODE"),
+        )
+    if backend == "openrouter":
+        if not env.get("OPENROUTER_API_KEY"):
+            raise ValueError(
+                "OPENROUTER_API_KEY is not set: export it to use the 'openrouter:' backend"
+            )
+        return OpenAICompatLLM(
+            base_url=env.get("OPENROUTER_BASE_URL") or DEFAULT_OPENROUTER_BASE_URL,
+            model=model,
+            api_key_env="OPENROUTER_API_KEY",
+            json_mode=_json_mode(env, "OPENROUTER_JSON_MODE"),
+            env=env,
+            backend="openrouter",
+        )
     return FakeLLM(lambda system, prompt: "{}")
 
 
@@ -559,6 +600,7 @@ def llm_for_node(node: str, budget: Budget, env: Mapping[str, str] | None = None
     if not spec:
         raise ValueError(
             f"no LLM configured for node {node!r}: set {node_var} or REPRODUCER_LLM "
-            "(e.g. 'ollama:qwen2.5-coder:7b' or 'openai:gpt-4o-mini')"
+            f"as '<backend>:<model>' with backend in {BACKENDS} (e.g. 'ollama:qwen2.5-coder:7b', "
+            "'openai:gpt-4o-mini' or 'openrouter:meta-llama/llama-3.1-8b-instruct:free')"
         )
     return MeteredLLM(make_llm(spec, env), budget, node)

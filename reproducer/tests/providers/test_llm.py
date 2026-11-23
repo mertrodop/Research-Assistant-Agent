@@ -479,6 +479,11 @@ def test_fake_callable_is_deterministic() -> None:
         ("openai:gpt-4o-mini", ("openai", "gpt-4o-mini")),
         ("fake:x", ("fake", "x")),
         ("ollama:hf.co/org/model:Q4_K_M", ("ollama", "hf.co/org/model:Q4_K_M")),
+        (
+            "openrouter:meta-llama/llama-3.1-8b-instruct:free",
+            ("openrouter", "meta-llama/llama-3.1-8b-instruct:free"),
+        ),
+        ("openrouter:openai/gpt-4o-mini", ("openrouter", "openai/gpt-4o-mini")),
     ],
 )
 def test_parse_spec(spec: str, expected: tuple[str, str]) -> None:
@@ -555,6 +560,118 @@ def test_llm_for_node_override_and_shared_budget() -> None:
     assert subtasks.inner.model == "qwen2.5-coder:7b"
     assert critic.budget is subtasks.budget is budget
     assert (critic.node, subtasks.node) == ("critic", "subtasks")
+
+
+# --------------------------------------------------------------------------- OpenRouter
+
+OR_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
+_FORMATS = {
+    "schema": {"type": "json_schema", "json_schema": {"name": "response", "schema": SCHEMA}},
+    "object": {"type": "json_object"},
+    "none": None,
+}
+
+
+def _or_env(stub: Stub, **extra: str) -> dict[str, str]:
+    return {"OPENROUTER_BASE_URL": f"{stub.url}/api/v1", "OPENROUTER_API_KEY": SECRET, **extra}
+
+
+@pytest.mark.parametrize("mode", [None, "schema", "object", "none"])
+def test_openrouter_request(stub: Stub, mode: str | None) -> None:
+    stub.add("POST", "/api/v1/chat/completions", 200, _openai_ok())
+    env = _or_env(stub, **({"OPENROUTER_JSON_MODE": mode} if mode else {}))
+    client = make_llm(f"openrouter:{OR_MODEL}", env)
+    assert isinstance(client, OpenAICompatLLM)
+    resp = client.complete("sys", "hello", max_tokens=16, json_schema=SCHEMA)
+
+    assert (resp.backend, resp.model, resp.text) == ("openrouter", OR_MODEL, '{"ok": true}')
+    (req,) = stub.posts("/api/v1/chat/completions")
+    assert req["headers"]["authorization"] == f"Bearer {SECRET}"
+    assert req["json"]["model"] == OR_MODEL
+    assert req["json"].get("response_format") == _FORMATS[mode or "schema"]
+
+
+def test_openrouter_default_base_url() -> None:
+    c = make_llm(f"openrouter:{OR_MODEL}", {"OPENROUTER_API_KEY": SECRET})
+    assert isinstance(c, OpenAICompatLLM)
+    assert c.base_url == "https://openrouter.ai/api/v1"
+    assert (c.api_key_env, c.json_mode, c.backend) == ("OPENROUTER_API_KEY", "schema", "openrouter")
+
+
+@pytest.mark.parametrize("spec", [f"openrouter:{OR_MODEL}", "openai:gpt-4o-mini"])
+def test_invalid_json_mode_env_rejected(spec: str) -> None:
+    env = {
+        "OPENROUTER_API_KEY": SECRET,
+        "OPENROUTER_JSON_MODE": "xml",
+        "OPENAI_JSON_MODE": "xml",
+    }
+    var = "OPENROUTER_JSON_MODE" if spec.startswith("openrouter") else "OPENAI_JSON_MODE"
+    with pytest.raises(ValueError, match=var):
+        make_llm(spec, env)
+
+
+@pytest.mark.parametrize("mode", [None, "schema", "object", "none"])
+def test_openai_json_mode_env(stub: Stub, mode: str | None) -> None:
+    stub.add("POST", "/v1/chat/completions", 200, _openai_ok())
+    env = {"OPENAI_BASE_URL": f"{stub.url}/v1", **({"OPENAI_JSON_MODE": mode} if mode else {})}
+    client = make_llm("openai:gpt-x", env)
+    client.complete("s", "p", max_tokens=4, json_schema=SCHEMA)
+    assert client.backend == "openai"  # type: ignore[attr-defined]
+    body = stub.posts("/v1/chat/completions")[0]["json"]
+    assert body.get("response_format") == _FORMATS[mode or "schema"]
+
+
+@pytest.mark.parametrize("key", [None, ""])
+def test_openrouter_missing_key_fails_before_network(stub: Stub, key: str | None) -> None:
+    env = {"OPENROUTER_BASE_URL": f"{stub.url}/api/v1"}
+    if key is not None:
+        env["OPENROUTER_API_KEY"] = key
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY is not set"):
+        make_llm(f"openrouter:{OR_MODEL}", env)
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        llm_for_node("critic", Budget(), {**env, "REPRODUCER_LLM": f"openrouter:{OR_MODEL}"})
+    assert stub.requests == []
+
+
+def test_llm_for_node_ollama_default_openrouter_critic() -> None:
+    env = {
+        "REPRODUCER_LLM": "ollama:qwen2.5-coder:7b",
+        "REPRODUCER_LLM_CRITIC": f"openrouter:{OR_MODEL}",
+        "OPENROUTER_API_KEY": SECRET,
+    }
+    budget = Budget()
+    critic = llm_for_node("critic", budget, env)
+    reflect = llm_for_node("reflect", budget, env)
+    assert isinstance(critic.inner, OpenAICompatLLM)
+    assert (critic.inner.backend, critic.inner.model) == ("openrouter", OR_MODEL)
+    assert critic.inner.base_url == "https://openrouter.ai/api/v1"
+    assert isinstance(reflect.inner, OllamaLLM)
+    assert reflect.inner.model == "qwen2.5-coder:7b"
+
+
+def test_openrouter_key_never_leaks(stub: Stub) -> None:
+    stub.add("POST", "/api/v1/chat/completions", 200, _openai_ok())
+    stub.add("POST", "/api/v1/chat/completions", 401, {"error": "bad key"})
+    env = _or_env(stub, REPRODUCER_LLM=f"openrouter:{OR_MODEL}")
+    seen: list[Any] = []
+    metered = llm_for_node("critic", Budget(), env)
+    metered.on_record = seen.append
+    resp = metered.complete("s", "p", max_tokens=4, json_schema=SCHEMA)
+    with pytest.raises(LLMError) as ei:
+        metered.complete("s", "p", max_tokens=4)
+
+    (rec,) = metered.records()
+    assert seen == [rec] and rec.backend == "openrouter" and rec.model == OR_MODEL
+    for text in (
+        rec.model_dump_json(),
+        resp.model_dump_json(),
+        repr(metered),
+        repr(metered.inner),
+        str(ei.value),
+        ei.value.body,
+        json.dumps(vars(metered.inner), default=str).replace(json.dumps(env), ""),
+    ):
+        assert SECRET not in text
 
 
 def test_llm_for_node_shared_budget_accumulates_across_nodes() -> None:
@@ -651,6 +768,19 @@ def test_live_openai_api_schema() -> None:
     client = OpenAICompatLLM(base_url, model)
     resp = client.complete(LIVE_SYSTEM, LIVE_PROMPT, max_tokens=64, json_schema=SCHEMA)
     _check_schema_json(resp, "openai-api")
+
+
+@pytest.mark.llm_live
+def test_live_openrouter_schema() -> None:
+    model = os.environ.get("REPRODUCER_LIVE_OPENROUTER_MODEL")
+    if not os.environ.get("OPENROUTER_API_KEY") or not model:
+        pytest.skip("set OPENROUTER_API_KEY and REPRODUCER_LIVE_OPENROUTER_MODEL to run")
+    client = make_llm(f"openrouter:{model}", os.environ)
+    # Current Claude models always think first, and thinking counts toward max_tokens;
+    # 64 could be used up before the JSON. Billing is for tokens used, not the cap.
+    resp = client.complete(LIVE_SYSTEM, LIVE_PROMPT, max_tokens=1024, json_schema=SCHEMA)
+    assert resp.backend == "openrouter"
+    _check_schema_json(resp, "openrouter")
 
 
 def test_metered_on_record_callback() -> None:
