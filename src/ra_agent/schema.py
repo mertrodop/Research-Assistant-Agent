@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 
 
 class Route(str, Enum):
-    NATIVE_TEXT = "native_text"
-    VLM_OCR = "vlm_ocr"
-    VLM_OCR_HIGH_DPI = "vlm_ocr_high_dpi"
+    DOCLING = "docling"
+    GRANITE = "granite"
+    TEXT_LAYER = "text_layer"
 
 
 class Severity(str, Enum):

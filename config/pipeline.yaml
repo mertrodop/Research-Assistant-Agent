@@ -9,7 +9,6 @@ router:
   ink_ratio_vlm: 0.02
 
 engine:
-  name: granite_docling
   model_id: ibm-granite/granite-docling-258M
   device: auto
   page_batch_size: 1

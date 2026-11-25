@@ -28,6 +28,7 @@ from rapidfuzz.distance import Levenshtein  # noqa: E402
 
 from ra_agent.config import Settings  # noqa: E402
 from ra_agent.ocr.engine import GraniteDoclingEngine, NativeTextEngine  # noqa: E402
+from ra_agent.schema import Route  # noqa: E402
 from ra_agent.ocr.gate import has_blockers, run_gate  # noqa: E402
 from ra_agent.ocr.render import page_count, page_stats, pdf_sha256  # noqa: E402
 
@@ -352,10 +353,12 @@ def eval_document() -> dict:
     from ra_agent.ocr.pipeline import OcrPipeline
 
     settings = Settings.load(ROOT / "config" / "pipeline.yaml")
-    settings.engine.name = "native"
     settings.crossref.enabled = True
     settings.figures.enabled = False
-    pipeline = OcrPipeline(settings=settings)
+    pipeline = OcrPipeline(
+        settings=settings,
+        engines={r: NativeTextEngine() for r in Route},  # text layer only, offline
+    )
     papers = []
     for pdf in sorted(RAW.glob("*.pdf")):
         document = pipeline.run(pdf)

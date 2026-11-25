@@ -20,7 +20,6 @@ class RouterSettings(BaseModel):
 
 
 class EngineSettings(BaseModel):
-    name: Literal["granite_docling", "native"] = "granite_docling"
     model_id: str = "ibm-granite/granite-docling-258M"
     device: str = "auto"
     page_batch_size: int = 1

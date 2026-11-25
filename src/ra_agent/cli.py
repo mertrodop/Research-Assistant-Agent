@@ -7,7 +7,6 @@ from pathlib import Path
 
 from .config import Settings, load_env_file
 from .llm.client import build_llm
-from .ocr.engine import build_engine
 from .ocr.pipeline import OcrPipeline, parse_pages
 from .ocr.render import pdf_sha256
 from .vault.note import write_note
@@ -21,7 +20,6 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("pdf", type=Path)
     ingest.add_argument("--config", type=Path, default=None)
     ingest.add_argument("--pages", default=None, help="e.g. 1-3,7")
-    ingest.add_argument("--engine", choices=["granite_docling", "native"], default=None)
     ingest.add_argument(
         "--device", choices=["auto", "cpu", "cuda", "mps", "xpu"], default=None
     )
@@ -49,7 +47,6 @@ def _build_parser() -> argparse.ArgumentParser:
     batch = sub.add_parser("batch", help="OCR every PDF under a directory")
     batch.add_argument("dir", type=Path, nargs="?", default=None)
     batch.add_argument("--config", type=Path, default=None)
-    batch.add_argument("--engine", choices=["granite_docling", "native"], default=None)
     batch.add_argument(
         "--device", choices=["auto", "cpu", "cuda", "mps", "xpu"], default=None
     )
@@ -67,7 +64,6 @@ def _build_parser() -> argparse.ArgumentParser:
     agent = sub.add_parser("agent", help="run the tool-calling agent on a task")
     agent.add_argument("task", help="what the agent should do, in one sentence")
     agent.add_argument("--config", type=Path, default=None)
-    agent.add_argument("--engine", choices=["granite_docling", "native"], default=None)
     agent.add_argument("--model", default=None)
     agent.add_argument("--base-url", default=None)
     agent.add_argument("--max-steps", type=int, default=None)
@@ -96,7 +92,6 @@ def _summary(document) -> str:
 def _ingest(args, settings: Settings) -> int:
     pipeline = OcrPipeline(
         settings=settings,
-        engine=build_engine(settings.engine),
         vision=build_llm(settings.models["vision"]),
     )
     out = args.out or settings.paths.staging_dir
@@ -111,10 +106,10 @@ def _ingest(args, settings: Settings) -> int:
     if not args.no_write:
         if args.vault:
             note_path = write_note(
-                document, args.vault, pipeline.engine.name, layout="vault"
+                document, args.vault, "docling", layout="vault"
             )
         else:
-            note_path = write_note(document, out, pipeline.engine.name)
+            note_path = write_note(document, out, "docling")
 
     if args.as_json:
         payload = document.model_dump(mode="json")
@@ -136,7 +131,6 @@ def _batch(args, settings: Settings) -> int:
     out = args.out or settings.paths.staging_dir
     pipeline = OcrPipeline(
         settings=settings,
-        engine=build_engine(settings.engine),
         vision=build_llm(settings.models["vision"]),
     )
     failures = 0
@@ -145,7 +139,7 @@ def _batch(args, settings: Settings) -> int:
         if not args.no_figures:
             figures_dir = Path(out) / "figures" / pdf_sha256(pdf)[:12]
         document = pipeline.run(pdf, figures_dir=figures_dir)
-        note_path = None if args.no_write else write_note(document, out, pipeline.engine.name)
+        note_path = None if args.no_write else write_note(document, out, "docling")
         print(_summary(document))
         if note_path:
             print(f"note     : {note_path}\n")
@@ -193,8 +187,6 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     load_env_file()
     settings = Settings.load(args.config)
-    if getattr(args, "engine", None):
-        settings.engine.name = args.engine
     if getattr(args, "device", None):
         settings.engine.device = args.device
     if hasattr(args, "figures_llm"):

@@ -5,7 +5,7 @@ from ra_agent.schema import FigureInterpretation, FigureRef, PageResult, Route
 
 
 def page(no: int, markdown: str) -> PageResult:
-    return PageResult(page_no=no, route=Route.NATIVE_TEXT, markdown=markdown)
+    return PageResult(page_no=no, route=Route.TEXT_LAYER, markdown=markdown)
 
 
 def test_repeated_headers_and_footers_are_stripped():

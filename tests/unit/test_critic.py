@@ -37,7 +37,7 @@ class FakeLlm:
 
 
 def page(no: int = 1, markdown: str = "Body text about baselines.") -> PageResult:
-    return PageResult(page_no=no, route=Route.NATIVE_TEXT, markdown=markdown)
+    return PageResult(page_no=no, route=Route.TEXT_LAYER, markdown=markdown)
 
 
 def test_high_scores_pass():

@@ -126,7 +126,7 @@ def build_tools(settings: Settings, pipeline: OcrPipeline | None = None) -> dict
         local = settings.model_copy(deep=True)
         local.crossref.enabled = True
         local.references.max_attempts = args.max_attempts
-        document = OcrPipeline(settings=local, engine=engine.engine).run(pdf)
+        document = OcrPipeline(settings=local, engines=engine.engines).run(pdf)
         counts: dict[str, int] = {}
         for check in document.references:
             counts[check.status] = counts.get(check.status, 0) + 1

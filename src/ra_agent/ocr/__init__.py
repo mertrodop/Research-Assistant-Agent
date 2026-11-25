@@ -5,7 +5,8 @@ from .engine import (
     GraniteDoclingEngine,
     NativeTextEngine,
     OcrEngineError,
-    build_engine,
+    DoclingStandardEngine,
+    build_engines,
 )
 from .gate import has_blockers, run_gate
 from .pipeline import OcrPipeline, PageCache, parse_pages
@@ -22,7 +23,8 @@ __all__ = [
     "has_blockers",
     "choose_route",
     "dpi_for",
-    "build_engine",
+    "build_engines",
+    "DoclingStandardEngine",
     "GraniteDoclingEngine",
     "NativeTextEngine",
     "OcrEngineError",

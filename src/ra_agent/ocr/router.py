@@ -10,19 +10,19 @@ def choose_route(
     router: RouterSettings,
     attempt: int = 1,
 ) -> Route:
-    """Deterministic routing. Code decides, never an LLM."""
-    if attempt >= 2:
-        return Route.VLM_OCR_HIGH_DPI
-    if stats.text_layer_chars >= router.native_text_min_chars:
-        return Route.NATIVE_TEXT
-    return Route.VLM_OCR
+    """Deterministic routing ladder. Code decides, never an LLM.
+
+    Text-layer page: docling -> granite @ high dpi -> text layer.
+    Scanned page: granite at base, high and max dpi.
+    """
+    if stats.text_layer_chars < router.native_text_min_chars:
+        return Route.GRANITE
+    return (Route.DOCLING, Route.GRANITE, Route.TEXT_LAYER)[min(attempt, 3) - 1]
 
 
 def dpi_for(route: Route, render: RenderSettings, attempt: int = 1) -> int:
     """DPI ladder: base -> high -> max. Each retry must change the input,
     otherwise a deterministic engine returns the same failure again."""
-    if route is Route.NATIVE_TEXT:
+    if route is not Route.GRANITE:
         return 0
-    if route is Route.VLM_OCR_HIGH_DPI:
-        return render.max_dpi if attempt >= 3 else render.high_dpi
-    return render.dpi
+    return (render.dpi, render.high_dpi, render.max_dpi)[min(attempt, 3) - 1]

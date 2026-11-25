@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ..config import EngineSettings
+from ..schema import Route
 
 
 _INDENT = (5.0, 14.0)  # points; hanging indent of a reference entry
@@ -26,7 +27,7 @@ class OcrEngine(Protocol):
 class NativeTextEngine:
     """PyMuPDF text layer. Free, deterministic, only valid when a text layer exists."""
 
-    name = "native_text"
+    name = "text_layer"
 
     def ocr_page(
         self, pdf_path: str | Path, page_no: int, dpi: int = 0
@@ -55,6 +56,40 @@ class NativeTextEngine:
                 out.append("")
             out.append(text)
         return "\n".join(out).strip(), None
+
+
+class DoclingStandardEngine:
+    """Docling's standard layout pipeline (clean Markdown, ~1 s/page warm on CPU).
+
+    A converter is cached per thread: docling converters are not thread safe.
+    """
+
+    name = "docling"
+
+    def __init__(self, settings: EngineSettings | None = None) -> None:
+        self.settings = settings or EngineSettings()
+        self._local = threading.local()
+
+    def ocr_page(
+        self, pdf_path: str | Path, page_no: int, dpi: int = 0
+    ) -> tuple[str, str | None]:
+        try:
+            converter = getattr(self._local, "converter", None)
+            if converter is None:
+                from docling.document_converter import DocumentConverter
+
+                converter = self._local.converter = DocumentConverter()
+            result = converter.convert(
+                source=str(pdf_path),
+                page_range=(page_no, page_no),
+                raises_on_error=False,
+            )
+            document = result.document
+            markdown = html.unescape(document.export_to_markdown() or "").strip()
+            doctags = document.export_to_doctags()
+        except Exception as exc:  # noqa: BLE001 - engine failures are data, not crashes
+            raise OcrEngineError(f"{type(exc).__name__}: {exc}") from exc
+        return markdown, doctags
 
 
 class GraniteDoclingEngine:
@@ -133,7 +168,9 @@ class GraniteDoclingEngine:
         return markdown, doctags
 
 
-def build_engine(settings: EngineSettings) -> OcrEngine:
-    if settings.name == "native":
-        return NativeTextEngine()
-    return GraniteDoclingEngine(settings)
+def build_engines(settings: EngineSettings) -> dict[Route, OcrEngine]:
+    return {
+        Route.DOCLING: DoclingStandardEngine(settings),
+        Route.GRANITE: GraniteDoclingEngine(settings),
+        Route.TEXT_LAYER: NativeTextEngine(),
+    }

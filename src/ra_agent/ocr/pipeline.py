@@ -11,7 +11,7 @@ from ..llm.client import LlmClient
 from .assemble import assemble
 from .critic import critique_page
 from .crossref import CrossrefClient, ReferenceCheck, split_references
-from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engine
+from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engines
 from .figures import extract_figures
 from .interpret import interpret_figures
 from .refagent import resolve_references
@@ -60,12 +60,12 @@ class OcrPipeline:
     def __init__(
         self,
         settings: Settings | None = None,
-        engine: OcrEngine | None = None,
+        engines: dict[Route, OcrEngine] | None = None,
         cache: PageCache | None = None,
         vision: LlmClient | None = None,
     ) -> None:
         self.settings = settings or Settings()
-        self.engine = engine or build_engine(self.settings.engine)
+        self.engines = engines or build_engines(self.settings.engine)
         self.cache = cache or PageCache(self.settings.pipeline.cache_dir)
         self.vision = vision
         self._native = NativeTextEngine()
@@ -82,14 +82,23 @@ class OcrPipeline:
             path.write_bytes(render_page(pdf_path, page_no, self.settings.critic.dpi).png)
         return path
 
-    def _process(
-        self, pdf_path: Path, sha: str, stats: PageStats, attempt: int
+    def process_page(
+        self,
+        pdf_path: Path,
+        sha: str,
+        page_no: int,
+        route: Route | None = None,
+        attempt: int = 1,
+        stats: PageStats | None = None,
     ) -> PageResult:
-        route = choose_route(stats, self.settings.router, attempt)
+        """OCR and gate one page. `route=None` lets the router choose for `attempt`."""
+        if stats is None:
+            stats = page_stats(
+                pdf_path, page_no, ink_threshold=self.settings.render.ink_threshold
+            )
+        route = route or choose_route(stats, self.settings.router, attempt)
         dpi = dpi_for(route, self.settings.render, attempt)
-        engine = self._native if self.engine.name == "native_text" else self.engine
-        if route is Route.NATIVE_TEXT:
-            engine = self._native
+        engine = self.engines[route]
 
         cached = self.cache.get(sha, page_no=stats.page_no, route=route, dpi=dpi)
         error = ""
@@ -187,7 +196,7 @@ class OcrPipeline:
         results: dict[int, PageResult] = {}
         with ThreadPoolExecutor(max_workers=self.settings.pipeline.concurrency) as pool:
             futures = {
-                page: pool.submit(self._process, pdf_path, sha, stats[page], 1)
+                page: pool.submit(self.process_page, pdf_path, sha, page, None, 1, stats[page])
                 for page in wanted
             }
             for page, future in futures.items():
@@ -199,7 +208,7 @@ class OcrPipeline:
                     break
                 futures = {
                     page: pool.submit(
-                        self._process, pdf_path, sha, stats[page], attempt
+                        self.process_page, pdf_path, sha, page, None, attempt, stats[page]
                     )
                     for page in retry
                 }

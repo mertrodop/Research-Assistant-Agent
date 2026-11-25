@@ -23,7 +23,7 @@ RECORD = {
 
 
 def document(title: str, status: str = "verified", refs: list[str] | None = None) -> OcrDocument:
-    page = PageResult(page_no=1, route=Route.NATIVE_TEXT, markdown=PAGE_ONE, status=status)
+    page = PageResult(page_no=1, route=Route.TEXT_LAYER, markdown=PAGE_ONE, status=status)
     checks = [
         ReferenceCheck(reference=Reference(raw=f"ref {i}"), status=s)
         for i, s in enumerate(refs or [])
