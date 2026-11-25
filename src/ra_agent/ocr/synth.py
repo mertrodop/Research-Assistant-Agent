@@ -197,6 +197,17 @@ def evaluate(meta: PaperMeta, record: dict, settings: MetaSettings) -> list[dict
     return fixes
 
 
+def ocr_pages_check(document: OcrDocument) -> CheckResult:
+    review = document.review_pages
+    return CheckResult(
+        name="ocr_pages",
+        passed=not review,
+        severity=Severity.BLOCKER,
+        detail=f"{len(review)} pages need review" if review else "all pages verified",
+        evidence=", ".join(map(str, review[:20])),
+    )
+
+
 def optimize(
     document: OcrDocument, crossref: CrossrefClient, settings: MetaSettings
 ) -> tuple[PaperMeta, list[CheckResult], int]:
@@ -229,16 +240,7 @@ def optimize(
             evidence=meta.arxiv_id or meta.doi or meta.title[:80],
         )
     ]
-    review = document.review_pages
-    checks.append(
-        CheckResult(
-            name="ocr_pages",
-            passed=not review,
-            severity=Severity.BLOCKER,
-            detail=f"{len(review)} pages need review" if review else "all pages verified",
-            evidence=", ".join(map(str, review[:20])),
-        )
-    )
+    checks.append(ocr_pages_check(document))
     judged = [r for r in document.references if r.status != "skipped"]
     bad = document.unresolved_references
     ratio = len(bad) / len(judged) if judged else 0.0

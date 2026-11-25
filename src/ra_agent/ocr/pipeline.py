@@ -16,7 +16,7 @@ from .figures import extract_figures
 from .interpret import describe_figures
 from .refagent import resolve_references
 from .synth import optimize
-from .gate import check_figure_grounding, has_blockers, run_gate
+from .gate import check_figure_grounding, document_status, has_blockers, run_gate
 from .render import PageStats, page_count, page_stats, pdf_sha256, render_page
 from .router import choose_route, dpi_for
 
@@ -255,11 +255,7 @@ class OcrPipeline:
                 self.settings.references,
                 self.vision if self.settings.references.use_llm else None,
             )
-        status = (
-            "verified"
-            if all(page.status == "verified" for page in ordered)
-            else "needs-review"
-        )
+        status = document_status(ordered, [])
         document = OcrDocument(
             source_pdf=str(pdf_path),
             sha256=sha,
@@ -279,7 +275,7 @@ class OcrPipeline:
                     "title": meta.title or document.title,
                     "doc_checks": doc_checks,
                     "meta_iterations": iterations,
-                    "status": "needs-review" if has_blockers(doc_checks) else status,
+                    "status": document_status(ordered, doc_checks),
                 }
             )
         return document

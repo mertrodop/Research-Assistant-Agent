@@ -412,3 +412,9 @@ def run_gate(
 
 def has_blockers(checks: list[CheckResult]) -> bool:
     return any(not check.passed and check.severity is Severity.BLOCKER for check in checks)
+
+
+def document_status(pages: list, doc_checks: list[CheckResult]) -> str:
+    """verified only if every page is verified and no document check blocks."""
+    bad = any(page.status != "verified" for page in pages) or has_blockers(doc_checks)
+    return "needs-review" if bad else "verified"

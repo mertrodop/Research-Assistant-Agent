@@ -16,10 +16,11 @@ from .llm.client import LlmClient, build_llm
 from .ocr.assemble import assemble
 from .ocr.critic import critique_page as _critique
 from .ocr.crossref import split_references
-from .ocr.gate import has_blockers
+from .ocr.gate import document_status
 from .ocr.interpret import describe_figure as _describe, figure_block
 from .ocr.pipeline import OcrPipeline
 from .ocr.refagent import resolve_references
+from .ocr.synth import ocr_pages_check
 from .ocr.render import page_count, pdf_sha256
 from .schema import OcrDocument, Route, localize
 from .vault import Vault
@@ -63,10 +64,13 @@ def _tool(fn):
             if isinstance(exc, ToolError):
                 error = str(exc)
             else:
-                given = ", ".join(
-                    f"{k}={str(v)[:60]!r}"
-                    for k, v in list(sig.bind(*args, **kwargs).arguments.items())[1:]
-                )
+                try:
+                    given = ", ".join(
+                        f"{k}={str(v)[:60]!r}"
+                        for k, v in list(sig.bind(*args, **kwargs).arguments.items())[1:]
+                    )
+                except Exception:  # noqa: BLE001 - bad call shape: the error must still come back
+                    given = "arguments that do not match the tool signature"
                 error = f"{fn.__name__} failed for {given}: {type(exc).__name__}: {exc}"
             return {"ok": False, "error": error[:400], "summary": error[:400]}
 
@@ -194,13 +198,13 @@ class Workspace:
         )
         new = new.model_copy(update={"figures": old.figures})
         pages = [new if p.page_no == page else p for p in doc.pages]
-        identity = [c for c in doc.doc_checks if c.name == "identity"]
-        failed = any(p.status == "needs-review" for p in pages) or has_blockers(identity)
+        doc = doc.model_copy(update={"pages": pages})
+        checks = [ocr_pages_check(doc) if c.name == "ocr_pages" else c for c in doc.doc_checks]
         doc = doc.model_copy(
             update={
-                "pages": pages,
                 "markdown": assemble(pages, {p.page_no: p.figures for p in pages}, "figures"),
-                "status": "needs-review" if failed else "verified",
+                "doc_checks": checks,
+                "status": document_status(pages, checks),
             }
         )
         self._save(paper, doc)

@@ -6,7 +6,7 @@ from conftest import make_pdf
 from ra_agent.config import Settings
 from ra_agent.llm.client import NullVisionClient
 from ra_agent.ocr.engine import NativeTextEngine
-from ra_agent.schema import Route
+from ra_agent.schema import CheckResult, Route, Severity
 from ra_agent.tools import TOOL_KINDS, Workspace
 
 
@@ -101,3 +101,30 @@ def test_list_papers(ws):
 def test_tool_kinds():
     assert TOOL_KINDS["commit_note"] == TOOL_KINDS["save_procedure"] == "write"
     assert set(TOOL_KINDS.values()) == {"read", "compute", "write"}
+
+
+def test_ingest_writes_unverified_frontmatter(ws):
+    import yaml
+
+    slug = ws.ingest_paper("paper.pdf")["slug"]
+    note = (ws.staging / "Papers" / f"{slug}.md").read_text(encoding="utf-8")
+    assert yaml.safe_load(note.split("---", 2)[1])["metadata"] == "unverified"
+
+
+def test_bad_call_shape_does_not_raise(ws):
+    result = ws.reprocess_page("x", bogus=1)
+    assert result["ok"] is False and result["error"]
+
+
+def test_reprocess_keeps_doc_level_blocker(ws):
+    slug = ws.ingest_paper("paper.pdf")["slug"]
+    doc = ws._doc(slug)
+    assert any(c.name == "identity" for c in doc.doc_checks)
+    blocker = CheckResult(name="citations_blocker", passed=False, severity=Severity.BLOCKER)
+    ws._save(slug, doc.model_copy(update={"doc_checks": doc.doc_checks + [blocker], "status": "needs-review"}))
+    assert ws.reprocess_page(slug, 1, "text_layer")["ok"]
+    fixed = ws._doc(slug)
+    assert all(p.status == "verified" for p in fixed.pages)
+    assert fixed.status == "needs-review"
+    ocr = next(c for c in fixed.doc_checks if c.name == "ocr_pages")
+    assert ocr.passed
