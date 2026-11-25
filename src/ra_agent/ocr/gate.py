@@ -176,19 +176,29 @@ def check_table_cells(markdown: str) -> CheckResult:
 
     A cell repeated within one row is a column span (docling export) and is fine.
     """
-    seen: dict[str, int] = {}
+    earlier: list[tuple[int, set[str]]] = []
     for number, block in enumerate(_table_blocks(markdown), 1):
-        rows = [_cells(r) for r in block if not _is_separator(r)][1:]
+        body = block[2:] if len(block) > 1 and _is_separator(block[1]) else block
+        rows = [_cells(r) for r in body if not _is_separator(r)]
         keys = ["|".join(r) for r in rows if any(r)]
-        for key in keys:
-            if key in seen and (seen[key] != number or keys.count(key) > 1):
+        dup = next((k for k in keys if keys.count(k) > 1), None)
+        if dup:
+            return _check(
+                "table_cells",
+                False,
+                detail=f"table {number}: data row repeated within the table",
+                evidence=dup[:160],
+            )
+        for first, prior in earlier:
+            shared = prior & set(keys)
+            if len(shared) >= 2:
                 return _check(
                     "table_cells",
                     False,
-                    detail=f"table {seen[key]}: data row repeated in table {number}",
-                    evidence=key[:160],
+                    detail=f"table {number} repeats {len(shared)} data rows of table {first}",
+                    evidence=sorted(shared)[0][:160],
                 )
-            seen.setdefault(key, number)
+        earlier.append((number, set(keys)))
         if len(rows) >= 3:
             for col in range(max(len(r) for r in rows)):
                 empty = sum(1 for r in rows if col >= len(r) or not r[col])

@@ -179,3 +179,15 @@ def test_localize_names_page_engine_and_evidence():
     assert localize("paperbench", page, check) == "paperbench, " + want
     page.checks = [check]
     assert page.problems == [want]
+
+
+def test_single_shared_row_across_tables_passes():
+    a = "| a | b |\n|---|---|\n| N/A | N/A |\n| 1 | 2 |\n"
+    b = "| c | d |\n|---|---|\n| N/A | N/A |\n| 5 | 6 |\n"
+    assert check_table_cells(a + "\ntext\n\n" + b).passed
+
+
+def test_duplicated_table_blocks_naming_table_2():
+    t = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n"
+    c = check_table_cells(t + "\ntext\n\n" + t)
+    assert not c.passed and "table 2" in c.detail
