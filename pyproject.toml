@@ -32,3 +32,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-m 'not integration'"
+markers = ["integration: spawns a subprocess (MCP stdio server)"]
