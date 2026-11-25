@@ -113,3 +113,22 @@ def test_engine_crash_is_recorded_not_raised(blank_pdf, tmp_path):
     assert page.error == "CUDA out of memory"
     assert "engine_error" in page.review_reasons
     assert page.attempt == config.pipeline.max_attempts
+
+
+def test_native_engine_separates_hanging_indent_entries(tmp_path):
+    import fitz
+
+    from ra_agent.ocr.engine import NativeTextEngine
+
+    doc = fitz.open()
+    page = doc.new_page()
+    y = 72
+    for x, text in [(72, "Andrew, R. L. and Vines, T. Assessing the reproducibility"), (82, "of discriminant function analyses. PeerJ, 2015."),
+                    (72, "Belz, A. A systematic review of reproducibility research"), (82, "in natural language processing. EACL, 2021.")]:
+        page.insert_text((x, y), text, fontsize=9)
+        y += 11
+    path = tmp_path / "refs.pdf"
+    doc.save(path)
+    text, _ = NativeTextEngine().ocr_page(path, 1)
+    blocks = [b for b in text.split("\n\n") if b.strip()]
+    assert len(blocks) == 2 and blocks[1].startswith("Belz")

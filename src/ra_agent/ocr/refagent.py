@@ -24,7 +24,9 @@ from ..schema import Reference, ReferenceCheck
 from .crossref import CrossrefClient
 
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.I)
-_ARXIV = re.compile(r"\barxiv[:\s/]*(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
+_ARXIV = re.compile(
+    r"\barxiv(?:\.org/(?:abs|pdf)/|[:\s/]*)(\d{4}\.\d{4,5})(?:v\d+)?", re.I
+)  # arXiv:2407.21787 and arxiv.org/abs/2407.21787
 _ARXIV_OLD = re.compile(r"\barxiv[:\s/]*([a-z\-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?", re.I)
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
 _TRAILING_PUNCT = ".,;:)]}"
@@ -217,6 +219,26 @@ class ReferenceAgent:
         trace.note_mismatch(check)
         return None
 
+    def _try_arxiv_title(
+        self, identity: ReferenceIdentity, reference: Reference, trace: ResolutionTrace
+    ) -> ReferenceCheck | None:
+        if len(identity.title) < 12:
+            trace.add("arxiv_title", "query too short")
+            return None
+        hits = self.crossref.search_arxiv(identity.title)
+        if not hits:
+            trace.add("arxiv_title", "no hits", network=True)
+            return None
+        scored = self._scored_reference(identity, reference)
+        best = max(hits, key=lambda hit: self.crossref.score_title(scored.title, hit["title"]))
+        item = {"title": [best["title"]], "issued": {"date-parts": [[int(best["year"])]]}}
+        check = self.crossref.evaluate(scored, item)
+        if check.status == "verified":
+            return self._accept(check, "arxiv_title", trace)
+        trace.add("arxiv_title", f"{check.status} score={check.score}", network=True)
+        trace.note_mismatch(check)
+        return None
+
     def resolve(self, reference: Reference) -> ReferenceCheck:
         trace = ResolutionTrace()
         identity = extract_identity(reference)
@@ -230,6 +252,7 @@ class ReferenceAgent:
         strategies.append(
             lambda: self._try_query(identity.title, "title", identity, reference, trace)
         )
+        strategies.append(lambda: self._try_arxiv_title(identity, reference, trace))
         strategies.append(
             lambda: self._try_query(
                 f"{identity.title} {identity.year}".strip(),

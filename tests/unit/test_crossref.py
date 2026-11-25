@@ -108,3 +108,56 @@ def test_check_references_uses_client(tmp_path):
     checks = check_references(MARKDOWN, client)
     assert len(checks) == 2
     assert checks[0].status == "verified"
+
+
+def test_wrapped_author_list_stays_one_entry():
+    markdown = """References
+
+Cai, D., Modi, C., Pillaud-Vivien, L., Margossian, C.,
+Gower, R. M., Blei, D., and Saul, L. K. Batch and match: black-box variational inference. 2024.
+Gloeckler, M., Deistler, M., Weilbach, C. D., Wood, F., and
+Macke, J. H. All-in-one simulation-based inference. 2024.
+"""
+    from ra_agent.ocr.crossref import split_references
+
+    entries = split_references(markdown)
+    assert len(entries) == 2
+    assert entries[0].raw.startswith("Cai, D.") and "Batch and match" in entries[0].raw
+    assert "All-in-one" in entries[1].raw
+
+
+def test_list_does_not_stop_at_initial_or_shebang():
+    from ra_agent.ocr.crossref import split_references
+
+    markdown = """References
+
+Sanchez, G., Spangher, A., Fan, H., Levi, E., and Biderman,
+S. Stay on Topic with Classifier-Free Guidance. 2024.
+
+#!/ usr/bin/env bash
+
+Zhou, H., Zhang, Q. MLLM-as-a-Judge: Assessing Multimodal LLM-as-a-Judge. 2024.
+"""
+    entries = split_references(markdown)
+    assert any("Stay on Topic" in e.raw for e in entries)
+    assert any("MLLM-as-a-Judge" in e.raw for e in entries)
+
+
+def test_layout_blocks_are_trusted_and_appendix_heading_ends_list():
+    from ra_agent.ocr.crossref import split_references
+
+    markdown = """References
+
+Bradley Brown, Jordan Juravsky, and Azalia
+Mirhoseini. Large Language Monkeys: Scaling Inference Compute, 2024.
+
+Edward Raff. A Step Toward Quantifying Independently Reproducible Machine Learning Research, 2019.
+
+Matei Zaharia, Omar Khattab, and Lingjiao Chen. The Shift from Models to Compound AI Systems, 2024.
+
+A Benchmark Details
+To obtain a dataset of all capsules on CodeOcean we used the public API in 2024.
+"""
+    entries = split_references(markdown)
+    assert len(entries) == 3
+    assert "Large Language Monkeys" in entries[0].raw

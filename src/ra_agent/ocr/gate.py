@@ -213,15 +213,49 @@ def check_doctags(doctags: str | None) -> CheckResult:
     )
 
 
+def _dedupe_spanning_cells(markdown: str) -> str:
+    """docling repeats a cell that spans columns once per column; count it once."""
+    lines = []
+    for line in markdown.splitlines():
+        if line.strip().startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            kept = [c for i, c in enumerate(cells) if i == 0 or c != cells[i - 1]]
+            line = "| " + " | ".join(kept) + " |"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _numbers(text: str) -> Counter:
+    """Multiset of numbers. 1,008 -> 1008; any other comma separates numbers
+    (footnote markers stick to commas in the text layer: "o1,11")."""
+    text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", _dedupe_spanning_cells(text))
+    return Counter(re.findall(r"\d+(?:\.\d+)?", text))
+
+
 def check_numbers(markdown: str, text_layer: str) -> CheckResult:
+    """Every number in the OCR output must exist in the text layer, as often.
+
+    A multiset, not a set: a misread value (21.0 -> 27.0), a dropped decimal point
+    (0.45 -> 0 45) or a duplicated table all leave numbers the page does not have,
+    even when each value also appears somewhere else on the page. Those are
+    blockers. Missing numbers (margin stamps, page numbers) stay a warning.
+    """
     if len(text_layer.strip()) < 50:
         return _check("numeric_agreement", True, Severity.INFO, detail="no baseline")
-    expected = set(_NUMBER.findall(text_layer))
-    found = set(_NUMBER.findall(markdown))
-    if not expected:
+    expected, found = _numbers(text_layer), _numbers(markdown)
+    if not expected and not found:
         return _check("numeric_agreement", True, Severity.INFO, detail="no numbers")
+    unsupported = found - expected
+    if unsupported:
+        return _check(
+            "numeric_agreement",
+            False,
+            Severity.BLOCKER,
+            detail=f"{sum(unsupported.values())} numbers not in the text layer",
+            evidence=", ".join(sorted(unsupported)[:8]),
+        )
     missing = expected - found
-    ratio = 1 - len(missing) / len(expected)
+    ratio = 1 - sum(missing.values()) / max(1, sum(expected.values()))
     return _check(
         "numeric_agreement",
         ratio >= 0.8,

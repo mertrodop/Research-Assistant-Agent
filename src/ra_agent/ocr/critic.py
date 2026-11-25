@@ -10,6 +10,12 @@ from ..schema import CheckResult, Severity
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.M)
 
+IMAGE_NOTE = """The attached image is the original page. Judge the OCR text against it:
+text that is not on the page is a hallucination, and a number that differs from the
+page is a fidelity error. Ignore reading order and line breaks.
+
+"""
+
 RUBRIC = """You are a strict reviewer of OCR output for one page of a scientific paper.
 
 Page text produced by OCR:
@@ -24,22 +30,34 @@ Score four dimensions from 1 to 5:
 - no_hallucination: are there no fabricated sentences, numbers or citations?
 
 Rules:
-- Quote the exact span you are judging in "evidence".
+- Every error must quote its "ocr_span" exactly as it appears in the OCR text.
 - Never invent content that is not in the text above.
 - If a dimension cannot be judged, score it 3 and say why.
 
 Answer with strict JSON only, no prose and no code fences:
 {{
-  "fidelity": 1,
-  "completeness": 1,
-  "structure": 1,
-  "no_hallucination": 1,
-  "evidence": "short quoted span",
+  "fidelity": <integer 1-5>,
+  "completeness": <integer 1-5>,
+  "structure": <integer 1-5>,
+  "no_hallucination": <integer 1-5>,
+  "errors": [
+    {{"type": "hallucination | wrong_number | missing | structure",
+      "ocr_span": "exact words copied from the OCR text, 4-15 words",
+      "page_says": "what the page shows instead, empty for hallucination"}}
+  ],
   "reason": "one sentence"
 }}
+5 means no problem at all, 1 means the dimension is badly wrong.
+List every concrete error in "errors"; use [] when there is none. Keep the answer short.
 """
 
 DIMENSIONS = ("fidelity", "completeness", "structure", "no_hallucination")
+BLOCKING_ERRORS = {"hallucination", "wrong_number"}
+
+
+def _in_text(span: str, text: str) -> bool:
+    words = re.findall(r"\w+", span.lower())
+    return len(words) >= 3 and " ".join(words) in " ".join(re.findall(r"\w+", text.lower()))
 
 
 def _parse(raw: str) -> dict:
@@ -64,8 +82,16 @@ def critique_page(
     client: LlmClient,
     settings: CriticSettings,
     page_no: int = 0,
+    image_path: str | Path | None = None,
+    text_layer: str = "",
 ) -> CheckResult:
-    """Tier 2 rubric critic. Returns a warn/blocker check, never raises."""
+    """Tier 2 rubric critic. Returns a warn/blocker check, never raises.
+
+    With image_path the critic compares the text to the page itself; without it
+    the critic only sees the OCR text and cannot judge fidelity. With text_layer,
+    a claimed error whose span is in the PDF text layer is discarded: that text is
+    on the page, so the claim is the critic's own mistake.
+    """
     if not markdown.strip():
         return CheckResult(
             name="critic",
@@ -75,7 +101,10 @@ def critique_page(
         )
     prompt = RUBRIC.format(markdown=markdown[:6000])
     try:
-        raw = client.complete(prompt)
+        if image_path is not None:
+            raw = client.describe(image_path, IMAGE_NOTE + prompt)
+        else:
+            raw = client.complete(prompt)
     except VisionError as exc:
         return CheckResult(
             name="critic",
@@ -96,15 +125,36 @@ def critique_page(
     scores = {name: _clamp(data.get(name)) for name in DIMENSIONS}
     lowest = min(scores.values())
     average = sum(scores.values()) / len(scores)
-    failed = lowest < settings.min_dimension or average < settings.min_average
+    # Fix list (semantic gradient): an error counts only when its quoted span is
+    # really in the OCR text, so the critic cannot block a page by hallucinating.
+    errors = [
+        e
+        for e in (data.get("errors") or [])
+        if isinstance(e, dict) and str(e.get("type", "")) in BLOCKING_ERRORS
+    ]
+    grounded = [
+        e
+        for e in errors
+        if _in_text(str(e.get("ocr_span", "")), markdown)
+        and not (text_layer and _in_text(str(e.get("ocr_span", "")), text_layer))
+    ]
+    failed = (
+        lowest < settings.min_dimension
+        or average < settings.min_average
+        or bool(grounded)
+    )
     detail = " ".join(f"{name}={score}" for name, score in scores.items())
-    detail += f" avg={average:.2f} min={lowest}"
+    detail += f" avg={average:.2f} min={lowest} errors={len(grounded)}/{len(errors)} grounded"
+    evidence = "; ".join(
+        f"{e.get('type')}: {str(e.get('ocr_span'))[:80]!r} -> {str(e.get('page_says', ''))[:60]!r}"
+        for e in grounded[:3]
+    )
     return CheckResult(
         name="critic",
         passed=not failed,
         severity=Severity.BLOCKER if failed else Severity.INFO,
         detail=detail,
-        evidence=str(data.get("evidence", ""))[:200],
+        evidence=evidence[:300],
     )
 
 

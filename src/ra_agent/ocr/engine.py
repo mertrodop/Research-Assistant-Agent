@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import html
 import threading
 from pathlib import Path
 from typing import Protocol
 
 from ..config import EngineSettings
+
+
+_INDENT = (5.0, 14.0)  # points; hanging indent of a reference entry
 
 
 class OcrEngineError(RuntimeError):
@@ -30,8 +34,27 @@ class NativeTextEngine:
         import fitz
 
         with fitz.open(pdf_path) as doc:
-            text = doc.load_page(page_no - 1).get_text("text") or ""
-        return text.strip(), None
+            # same flags and clip as get_text("text"); "dict" defaults drop figure text
+            data = doc.load_page(page_no - 1).get_text(
+                "dict", flags=fitz.TEXTFLAGS_TEXT, clip=fitz.INFINITE_RECT()
+            )
+        # Same lines, same order as get_text("text"); blocks are not separated.
+        lines = [
+            (line["bbox"][0], "".join(span["text"] for span in line["spans"]))
+            for block in data["blocks"]
+            if block.get("type") == 0
+            for line in block["lines"]
+        ]
+        out: list[str] = []
+        for i, (x0, text) in enumerate(lines):
+            # Hanging indent (bibliographies): a new entry starts where the next
+            # line is indented, or where the text dedents after an indented line.
+            indented_next = i + 1 < len(lines) and _INDENT[0] <= lines[i + 1][0] - x0 <= _INDENT[1]
+            dedent = i > 0 and _INDENT[0] <= lines[i - 1][0] - x0 <= _INDENT[1]
+            if (indented_next or dedent) and out and out[-1] != "":
+                out.append("")
+            out.append(text)
+        return "\n".join(out).strip(), None
 
 
 class GraniteDoclingEngine:
@@ -47,8 +70,13 @@ class GraniteDoclingEngine:
         self.settings = settings or EngineSettings()
         self._local = threading.local()
 
-    def _converter(self):
-        converter = getattr(self._local, "converter", None)
+    def _converter(self, dpi: int = 0):
+        # One converter per (thread, scale): docling converters are not thread
+        # safe, and the render scale is fixed when the converter is built.
+        converters = getattr(self._local, "converters", None)
+        if converters is None:
+            converters = self._local.converters = {}
+        converter = converters.get(dpi)
         if converter is None:
             from docling.datamodel.accelerator_options import (
                 AcceleratorDevice,
@@ -63,6 +91,8 @@ class GraniteDoclingEngine:
             from docling.pipeline.vlm_pipeline import VlmPipeline
 
             vlm_options = VlmConvertOptions.from_preset("granite_docling")
+            if dpi > 0:
+                vlm_options.scale = dpi / 72  # PDF points are 1/72 inch
             pipeline_options = VlmPipelineOptions(vlm_options=vlm_options)
             device = self.settings.device.lower()
             if device in {"auto", "cpu", "cuda", "mps", "xpu"}:
@@ -77,14 +107,14 @@ class GraniteDoclingEngine:
                     )
                 }
             )
-            self._local.converter = converter
+            converters[dpi] = converter
         return converter
 
     def ocr_page(
         self, pdf_path: str | Path, page_no: int, dpi: int = 0
     ) -> tuple[str, str | None]:
         try:
-            result = self._converter().convert(
+            result = self._converter(dpi).convert(
                 source=str(pdf_path),
                 page_range=(page_no, page_no),
                 raises_on_error=False,
@@ -92,7 +122,7 @@ class GraniteDoclingEngine:
         except Exception as exc:  # noqa: BLE001 - engine failures are data, not crashes
             raise OcrEngineError(f"{type(exc).__name__}: {exc}") from exc
         document = result.document
-        markdown = (document.export_to_markdown() or "").strip()
+        markdown = html.unescape(document.export_to_markdown() or "").strip()
         if not markdown and result.status is not None and result.status.name != "SUCCESS":
             raise OcrEngineError(f"docling status {result.status.name}")
         doctags: str | None = None

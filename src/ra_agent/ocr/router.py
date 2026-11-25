@@ -18,9 +18,11 @@ def choose_route(
     return Route.VLM_OCR
 
 
-def dpi_for(route: Route, render: RenderSettings) -> int:
+def dpi_for(route: Route, render: RenderSettings, attempt: int = 1) -> int:
+    """DPI ladder: base -> high -> max. Each retry must change the input,
+    otherwise a deterministic engine returns the same failure again."""
     if route is Route.NATIVE_TEXT:
         return 0
     if route is Route.VLM_OCR_HIGH_DPI:
-        return render.high_dpi
+        return render.max_dpi if attempt >= 3 else render.high_dpi
     return render.dpi

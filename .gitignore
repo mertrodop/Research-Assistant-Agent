@@ -2,8 +2,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .cache/
-vault/
+/vault/
 .env
 *.egg-info/
 build/
 dist/
+eval/results/

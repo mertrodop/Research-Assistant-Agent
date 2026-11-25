@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 
 
 class RenderSettings(BaseModel):
-    dpi: int = 200
-    high_dpi: int = 300
-    max_dpi: int = 400
+    dpi: int = 144
+    high_dpi: int = 216
+    max_dpi: int = 288
     ink_threshold: int = 200
 
 
@@ -66,7 +66,7 @@ class VisionSettings(BaseModel):
     base_url: str = "https://openrouter.ai/api/v1"
     api_key_env: str = "OPEN_ROUTER_API_KEY"
     timeout_s: float = 90.0
-    max_tokens: int = 700
+    max_tokens: int = 2000
     temperature: float = 0.0
     concurrency: int = 2
     cache_dir: str = ".cache/figures"
@@ -79,6 +79,7 @@ class CriticSettings(BaseModel):
     enabled: bool = False
     min_dimension: int = 3
     min_average: float = 3.5
+    dpi: int = 110  # page image shown to the critic; readable, few tokens
 
 
 class CrossrefSettings(BaseModel):
@@ -96,6 +97,15 @@ class ReferenceSettings(BaseModel):
     max_attempts: int = 4
     use_llm: bool = False
     mismatch_floor: float = 0.5
+
+
+class MetaSettings(BaseModel):
+    """Document evaluator-optimizer. Runs with crossref: it needs external records."""
+
+    max_iter: int = 3
+    min_title_score: float = 0.9
+    min_author_overlap: float = 0.6
+    max_unresolved_refs: float = 0.3
 
 
 class AgentSettings(BaseModel):
@@ -119,6 +129,7 @@ class Settings(BaseModel):
     critic: CriticSettings = Field(default_factory=CriticSettings)
     crossref: CrossrefSettings = Field(default_factory=CrossrefSettings)
     references: ReferenceSettings = Field(default_factory=ReferenceSettings)
+    meta: MetaSettings = Field(default_factory=MetaSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
 
     @classmethod

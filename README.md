@@ -69,8 +69,9 @@ Obsidian layout: `vault/Resources/Parsed/<sha12>.md`.
 | Figure reading | `ocr/interpret.py` + `llm/client.py` | LLM proposes, code verifies (grounded critic) |
 | Tier 1 gate | `ocr/gate.py` | code: 11 deterministic checks |
 | References | `ocr/refagent.py` + `ocr/crossref.py` | code runs the loop, LLM only proposes identities |
-| Tier 2 critic | `ocr/critic.py` | LLM scores, code applies the threshold |
-| Retry / circuit breaker | `ocr/pipeline.py` | code: DPI ladder, <= 3 attempts |
+| Tier 2 critic | `ocr/critic.py` | LLM lists errors from the page image, code verifies each quote |
+| Retry / circuit breaker | `ocr/pipeline.py` | code: DPI ladder 144 -> 216 -> 288, <= 3 attempts |
+| Document evaluator-optimizer | `ocr/synth.py` | code: draft identity, compare to arXiv/Crossref, apply fix list, <= 3 iterations |
 | Note | `vault/note.py` | code |
 | Agent loop | `agent/loop.py` + `agent/tools.py` | LLM proposes one action, code validates and stops |
 
@@ -79,6 +80,11 @@ Tier 1 checks: `non_empty`, `printable_ratio`, `repetition_loop`, `coverage`,
 `doctags_balance`, `numeric_agreement`, `reference_fields`. A page with a failing
 `blocker` is retried; a page with a failing `warn` still counts as verified but the reason
 is recorded in the note.
+
+`numeric_agreement` compares numbers as a multiset against the PDF text layer. A number
+the text layer does not have, or has fewer times, is a `blocker`: that is how a misread
+value (`13.2 ± 0.3` -> `0.9`), a dropped decimal point (`0.45` -> `0 45`) and a duplicated
+table look. Missing numbers (margin stamps, page numbers) stay a `warn`.
 
 `table_header` was added because of a real failure in this pipeline: Granite-Docling drops
 the table header and promotes the first data row (`| 1 | 0.91 |` followed by the
@@ -174,11 +180,43 @@ ra-ocr batch --figures-llm --vision-model ibm-granite/granite-vision-3.1-2b \
 
 ## Tier 2: rubric critic
 
-A page that passes Tier 1 goes to a rubric critic when `--critic` is given. Four dimensions
-are scored 1-5 (`fidelity`, `completeness`, `structure`, `no_hallucination`); if the lowest
-dimension is below `min_dimension` or the average is below `min_average`, the page becomes
-`needs-review` and re-enters the DPI ladder. If the critic is unreachable the check degrades
-to `warn` and the run does not crash.
+A page that passes Tier 1 goes to a rubric critic when `--critic` is given. The critic sees
+the rendered page image (`critic.dpi`) next to the OCR text, scores four dimensions 1-5
+(`fidelity`, `completeness`, `structure`, `no_hallucination`) and returns a fix list:
+`{"type": "hallucination | wrong_number | missing | structure", "ocr_span", "page_says"}`.
+
+Code decides what counts:
+
+- a `hallucination` or `wrong_number` error blocks the page only when its `ocr_span` is
+  really in the OCR text (the critic cannot block a page with its own invention);
+- when the page has a text layer, an error whose span is in the text layer is discarded:
+  that text is on the page, so the claim is wrong (running headers, figure labels);
+- a low score (`min_dimension`, `min_average`) also blocks.
+
+If the critic is unreachable or returns broken JSON the check degrades to `warn` and the
+run does not crash.
+
+## Document evaluator-optimizer
+
+With `--crossref`, the assembled document goes through the right half of slide 6:
+
+```
+draft identity (page 1) -> evaluator: OCR · Citation · DOI · Author · Venue <-> arXiv / Crossref
+        ^                                   |
+        +---- JSON fix list, iter < 3 ------+  -> verified note | #needs-review
+```
+
+| Check | Severity | Passes when |
+|---|---|---|
+| `identity` | blocker | an arXiv/Crossref record exists and the draft converges to it within `meta.max_iter` |
+| `ocr_pages` | blocker | every page is verified |
+| `citations` | warn | at most `meta.max_unresolved_refs` of the checked references are unresolved or mismatched |
+
+The draft (title, authors, year, DOI, arXiv id) is read from page 1 without any model. A fix
+is taken only from an external record, never invented; the loop repeats because a fixed field
+can unlock a better lookup (an arXiv record that carries a journal DOI leads to the Crossref
+record with the venue). The result goes into the note frontmatter (`authors`, `year`,
+`venue`, `doi`, `arxiv_id`) and a `## Document checks` table.
 
 ## Agentic reference resolution
 
@@ -193,11 +231,19 @@ evaluate, reflect, retry, stop at a circuit breaker.
 | Stage | What happens | Who decides |
 |---|---|---|
 | Perceive | DOI and arXiv identifiers are extracted by regex; year from the entry | code |
-| Act | One strategy per attempt: `doi` -> `arxiv` -> `title` -> `title_year` | code |
+| Act | One strategy per attempt: `doi` -> `arxiv` -> `title` -> `arxiv_title` -> `title_year` | code |
 | Evaluate | Title similarity (`rapidfuzz`) plus year tolerance decides the status | code |
 | Reflect | The failed attempt is appended to the trace with its score | code |
 | Rescue | If the budget is not spent, the LLM proposes a title/DOI as strict JSON | LLM proposes, code validates |
 | Stop | `max_attempts` network calls, then `unresolved` with the full trace | code |
+
+`arxiv_title` exists because ML venues (PMLR, OpenReview) publish without DOIs, and a
+Crossref title search then returns an unrelated record. arXiv is queried with at most one
+call per 3 seconds, as its API terms ask.
+
+Entry boundaries come from the PDF layout: the native engine inserts a blank line where a
+hanging indent starts a new bibliography entry, so a wrapped author list
+(`Margossian, C.,` / `Gower, R. M., ...`) stays one entry.
 
 Strategies that cannot run are skipped without consuming budget, so a reference without a
 DOI does not waste an attempt. Every check records its `strategy` and its `attempts` trace,

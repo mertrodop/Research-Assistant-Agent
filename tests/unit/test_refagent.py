@@ -25,6 +25,8 @@ class StubCrossref(CrossrefClient):
         self.search_items = search_items or []
         self.doi_calls: list[str] = []
         self.search_calls: list[str] = []
+        self.arxiv_calls: list[str] = []
+        self.arxiv_items: list[dict] = []
 
     def lookup_doi(self, doi: str):
         self.doi_calls.append(doi)
@@ -33,6 +35,10 @@ class StubCrossref(CrossrefClient):
     def search(self, query: str):
         self.search_calls.append(query)
         return self.search_items
+
+    def search_arxiv(self, title: str):
+        self.arxiv_calls.append(title)
+        return self.arxiv_items
 
 
 class FakeLlm:
@@ -95,7 +101,21 @@ def test_circuit_breaker_stops_after_budget(tmp_path):
     )
     assert check.status == "unresolved"
     assert check.strategy == "exhausted"
-    assert len(stub.search_calls) == 2
+    # budget 2 = crossref title + arxiv title; title_year never runs
+    assert len(stub.search_calls) == 1
+    assert len(stub.arxiv_calls) == 1
+
+
+def test_arxiv_title_resolves_entry_crossref_misses(tmp_path):
+    # PMLR / OpenReview papers have no DOI and Crossref returns an unrelated record
+    stub = StubCrossref(
+        search_items=[{"title": ["Review for an unrelated paper"], "issued": {"date-parts": [[2024]]}}],
+        tmp_path=tmp_path,
+    )
+    stub.arxiv_items = [{"title": TITLE, "year": "2023", "authors": [], "doi": "", "venue": "", "source": "arxiv"}]
+    check = ReferenceAgent(stub).resolve(ref("Tosun, E. Grounded writing. ICML 2024."))
+    assert check.status == "verified"
+    assert check.strategy == "arxiv_title"
 
 
 def test_attempts_are_recorded(tmp_path):
@@ -168,3 +188,8 @@ def test_resolve_references_maps_all(tmp_path):
     )
     assert len(checks) == 2
     assert all(check.status == "verified" for check in checks)
+
+
+def test_arxiv_url_is_an_identifier():
+    identity = extract_identity(ref("Raff, E. A Step Toward Reproducible ML, 2019. URL http://arxiv.org/abs/1909.06674."))
+    assert identity.arxiv == "1909.06674"

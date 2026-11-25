@@ -1,7 +1,7 @@
 render:
-  dpi: 200
-  high_dpi: 300
-  max_dpi: 400
+  dpi: 144        # Granite-Docling preset scale 2.0
+  high_dpi: 216
+  max_dpi: 288
   ink_threshold: 200
 
 router:
@@ -47,7 +47,7 @@ vision:
   base_url: https://openrouter.ai/api/v1
   api_key_env: OPEN_ROUTER_API_KEY
   timeout_s: 90
-  max_tokens: 700
+  max_tokens: 2000   # reasoning models spend part of it before answering
   temperature: 0.0
   concurrency: 2
   cache_dir: .cache/figures
@@ -57,6 +57,7 @@ critic:
   enabled: false
   min_dimension: 3
   min_average: 3.5
+  dpi: 110
 
 crossref:
   enabled: false
@@ -70,6 +71,12 @@ references:
   max_attempts: 4
   use_llm: false
   mismatch_floor: 0.5
+
+meta:              # document evaluator-optimizer, runs with crossref
+  max_iter: 3
+  min_title_score: 0.9
+  min_author_overlap: 0.6
+  max_unresolved_refs: 0.3
 
 agent:
   enabled: false

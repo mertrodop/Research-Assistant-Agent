@@ -27,3 +27,10 @@ def test_dpi_ladder():
     assert dpi_for(Route.NATIVE_TEXT, render) == 0
     assert dpi_for(Route.VLM_OCR, render) == 200
     assert dpi_for(Route.VLM_OCR_HIGH_DPI, render) == 300
+
+
+def test_third_attempt_uses_max_dpi():
+    # attempt 3 must differ from attempt 2, otherwise the retry repeats the same failure
+    render = RenderSettings(dpi=144, high_dpi=216, max_dpi=288)
+    assert dpi_for(Route.VLM_OCR_HIGH_DPI, render, attempt=2) == 216
+    assert dpi_for(Route.VLM_OCR_HIGH_DPI, render, attempt=3) == 288

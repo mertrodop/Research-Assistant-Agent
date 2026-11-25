@@ -17,7 +17,7 @@ _CONTINUATION = re.compile(
     re.I,
 )
 _NOISE = re.compile(r"^(?:table|figure|fig\.|algorithm|listing)\s*\d", re.I)
-_APPENDIX = re.compile(r"^(?:appendix\b|[A-Z]\.\s+[A-Z][a-z])")
+_APPENDIX = re.compile(r"^(?:appendix\b|[A-Z]\.\s+[A-Z][a-z]|[A-Z]\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$)")
 _NEW_ENTRY = re.compile(
     r"^(?:"
     r"[A-Z][A-Za-z'\u2019\-]+,\s+[A-Z]\."  # Cai, C.
@@ -26,6 +26,7 @@ _NEW_ENTRY = re.compile(
     r"|[A-Z][a-z]+ [A-Z][a-z]+ and\s"  # Sheeba Samuel and
     r")"
 )
+_UNFINISHED = re.compile(r"(?:,|\band)\s*$")  # author list wraps onto the next line
 API = "https://api.crossref.org/works"
 
 
@@ -42,13 +43,17 @@ def split_references(markdown: str) -> list[Reference]:
     if start is None:
         return []
 
+    # Blank lines mark entries when the engine saw the layout (hanging indents,
+    # list items); then name patterns would only split entries that wrap.
+    layout = sum(1 for line in lines[start + 1 : start + 200] if not line.strip()) >= 3
     blocks: list[str] = []
     buffer: list[str] = []
     for line in lines[start + 1 :]:
         stripped = line.strip()
-        if stripped.startswith("#"):
+        if re.match(r"^#{1,6}\s", stripped):  # a heading, not "#!/usr/bin/env"
             break
-        if _APPENDIX.match(stripped) and len(stripped) < 90:
+        unfinished = bool(buffer) and bool(_UNFINISHED.search(buffer[-1]))
+        if _APPENDIX.match(stripped) and len(stripped) < 90 and not unfinished:
             break
         if not stripped:
             if buffer:
@@ -58,7 +63,13 @@ def split_references(markdown: str) -> list[Reference]:
         if _ENTRY_START.match(line) and buffer:
             blocks.append(" ".join(buffer))
             buffer = [stripped]
-        elif _NEW_ENTRY.match(stripped) and buffer and len(" ".join(buffer)) > 40:
+        elif (
+            not layout
+            and _NEW_ENTRY.match(stripped)
+            and buffer
+            and len(" ".join(buffer)) > 40
+            and not _UNFINISHED.search(buffer[-1])
+        ):
             blocks.append(" ".join(buffer))
             buffer = [stripped]
         else:
@@ -69,7 +80,9 @@ def split_references(markdown: str) -> list[Reference]:
     entries: list[str] = []
     for block in blocks:
         if entries and (
-            _CONTINUATION.match(block) or block[:1].islower()
+            _CONTINUATION.match(block)
+            or block[:1].islower()
+            or _UNFINISHED.search(entries[-1])
         ):
             entries[-1] = f"{entries[-1]} {block}"
         else:
@@ -192,6 +205,12 @@ class CrossrefClient:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(item, ensure_ascii=False), encoding="utf-8")
         return item
+
+    def search_arxiv(self, title: str) -> list[dict]:
+        """arXiv title search, shares this client's cache and timeout."""
+        from .synth import search_arxiv  # local import: synth imports this module
+
+        return search_arxiv(title, self.cache_dir, self.timeout_s)
 
     def score_title(self, reference_title: str, candidate: str) -> float:
         return fuzz.token_set_ratio(reference_title.lower(), candidate.lower()) / 100

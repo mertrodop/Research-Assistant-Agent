@@ -103,6 +103,18 @@ class ReferenceCheck(BaseModel):
     attempts: list[str] = Field(default_factory=list)
 
 
+class PaperMeta(BaseModel):
+    """Paper identity: drafted from page 1, corrected from arXiv / Crossref."""
+
+    title: str = ""
+    authors: list[str] = Field(default_factory=list)
+    year: str = ""
+    venue: str = ""
+    doi: str = ""
+    arxiv_id: str = ""
+    source: str = ""
+
+
 class OcrDocument(BaseModel):
     source_pdf: str
     sha256: str
@@ -112,6 +124,9 @@ class OcrDocument(BaseModel):
     status: Literal["verified", "needs-review"] = "verified"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     references: list[ReferenceCheck] = Field(default_factory=list)
+    meta: PaperMeta | None = None
+    meta_iterations: int = 0
+    doc_checks: list[CheckResult] = Field(default_factory=list)
 
     @property
     def review_pages(self) -> list[int]:
@@ -135,3 +150,8 @@ class NoteFrontmatter(BaseModel):
     figures: int = 0
     figure_files: list[str] = Field(default_factory=list)
     figure_readings: int = 0
+    authors: list[str] = Field(default_factory=list)
+    year: str = ""
+    venue: str = ""
+    doi: str = ""
+    arxiv_id: str = ""

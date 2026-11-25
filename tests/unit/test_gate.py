@@ -110,3 +110,35 @@ def test_dense_page_with_empty_ocr_blocks():
 @pytest.mark.parametrize("markdown", ["", "   ", "\x00\x01\x02"])
 def test_garbage_is_blocked(markdown):
     assert has_blockers(run_gate(markdown, GateSettings()))
+
+
+def test_misread_number_blocks_even_if_value_exists_elsewhere():
+    from ra_agent.ocr.gate import check_numbers
+
+    layer = "Score 13.2 ± 0.3 for o1 and 10.9 ± 0.9 for Claude, over 3 seeds and 20 papers."
+    ocr = layer.replace("13.2 ± 0.3", "13.2 ± 0.9")  # 0.9 also appears later
+    check = check_numbers(ocr, layer)
+    assert not check.passed and check.severity.value == "blocker"
+
+
+def test_dropped_decimal_point_blocks():
+    from ra_agent.ocr.gate import check_numbers
+
+    layer = "The judge reaches an F1 of 0.45 with a variance of 0.05 on the full set of papers."
+    check = check_numbers(layer.replace("0.45", "0 45"), layer)
+    assert not check.passed and "45" in check.evidence
+
+
+def test_number_formatting_is_not_an_error():
+    from ra_agent.ocr.gate import check_numbers
+
+    layer = "We reviewed 1,008 studies and found 484 with errors across all fields in total."
+    assert check_numbers(layer.replace("1,008", "1008"), layer).passed
+
+
+def test_footnote_marker_and_spanning_cell_are_not_errors():
+    from ra_agent.ocr.gate import check_numbers
+
+    layer = "We evaluate GPT-4o,10 o1,11 and o3-mini.12 With an extended 36 hour limit the score rises."
+    ocr = "We evaluate GPT-4o, 10 o1, 11 and o3-mini. 12\n\n| With an extended 36 hour limit | With an extended 36 hour limit |\n\nthe score rises."
+    assert check_numbers(ocr, layer).severity.value != "blocker"

@@ -15,8 +15,9 @@ from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engine
 from .figures import extract_figures
 from .interpret import interpret_figures
 from .refagent import resolve_references
+from .synth import optimize
 from .gate import check_figure_grounding, has_blockers, run_gate
-from .render import PageStats, page_count, page_stats, pdf_sha256
+from .render import PageStats, page_count, page_stats, pdf_sha256, render_page
 from .router import choose_route, dpi_for
 
 
@@ -73,11 +74,19 @@ class OcrPipeline:
         text, _ = self._native.ocr_page(pdf_path, page_no)
         return text
 
+    def _page_png(self, pdf_path: Path, sha: str, page_no: int) -> Path:
+        """Page image the critic compares against, cached next to the OCR cache."""
+        path = self.cache.root / sha / f"p{page_no:04d}_critic.png"
+        if not path.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(render_page(pdf_path, page_no, self.settings.critic.dpi).png)
+        return path
+
     def _process(
         self, pdf_path: Path, sha: str, stats: PageStats, attempt: int
     ) -> PageResult:
         route = choose_route(stats, self.settings.router, attempt)
-        dpi = dpi_for(route, self.settings.render)
+        dpi = dpi_for(route, self.settings.render, attempt)
         engine = self._native if self.engine.name == "native_text" else self.engine
         if route is Route.NATIVE_TEXT:
             engine = self._native
@@ -127,7 +136,12 @@ class OcrPipeline:
         ):
             checks.append(
                 critique_page(
-                    markdown, self.vision, self.settings.critic, stats.page_no
+                    markdown,
+                    self.vision,
+                    self.settings.critic,
+                    stats.page_no,
+                    image_path=self._page_png(pdf_path, sha, stats.page_no),
+                    text_layer=text_layer,
                 )
             )
             failed = has_blockers(checks)
@@ -232,7 +246,7 @@ class OcrPipeline:
             if all(page.status == "verified" for page in ordered)
             else "needs-review"
         )
-        return OcrDocument(
+        document = OcrDocument(
             source_pdf=str(pdf_path),
             sha256=sha,
             title=self._title(pdf_path, markdown),
@@ -241,6 +255,20 @@ class OcrPipeline:
             status=status,
             references=references,
         )
+        if self.settings.crossref.enabled:
+            meta, doc_checks, iterations = optimize(
+                document, self._crossref_client(), self.settings.meta
+            )
+            document = document.model_copy(
+                update={
+                    "meta": meta,
+                    "title": meta.title or document.title,
+                    "doc_checks": doc_checks,
+                    "meta_iterations": iterations,
+                    "status": "needs-review" if has_blockers(doc_checks) else status,
+                }
+            )
+        return document
 
     def _crossref_client(self) -> CrossrefClient:
         config = self.settings.crossref
