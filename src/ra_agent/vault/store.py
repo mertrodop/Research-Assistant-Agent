@@ -35,6 +35,11 @@ def slugify(title: str, fallback: str) -> str:
     return "untitled"
 
 
+def _check_slug(slug: str) -> None:
+    if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
+        raise ValueError(f"invalid slug: {slug!r}")
+
+
 def _front(text: str) -> dict:
     return yaml.safe_load(text.split("---", 2)[1]) or {}
 
@@ -87,6 +92,7 @@ class Vault:
 
     def diff(self, slug: str) -> str:
         """Unified diff of the staged note against the vault note; full text if new."""
+        _check_slug(slug)
         staged = (self._papers(self.staging) / f"{slug}.md").read_text(encoding="utf-8")
         current = self._papers(self.root) / f"{slug}.md"
         if not current.is_file():
@@ -102,23 +108,31 @@ class Vault:
 
     def commit(self, slug: str) -> Path:
         """Move the staged note and figures into the vault; rename the raw PDF to <slug>.pdf."""
+        _check_slug(slug)
         staged = self._papers(self.staging) / f"{slug}.md"
         if not staged.is_file():
             raise FileNotFoundError(f"nothing staged for {slug}")
-        source_pdf = Path(_front(staged.read_text(encoding="utf-8")).get("source_pdf", ""))
-        target = self._papers(self.root) / f"{slug}.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        figures = self._papers(self.staging) / slug
-        if figures.is_dir():
-            shutil.rmtree(self._papers(self.root) / slug, ignore_errors=True)
-            shutil.move(figures, self._papers(self.root) / slug)
-        shutil.move(staged, target)
+        text = staged.read_text(encoding="utf-8")
+        front = _front(text)
+        source_pdf = Path(front.get("source_pdf", ""))
         if source_pdf.is_file() and source_pdf.name != f"{slug}.pdf":
             renamed = source_pdf.with_name(f"{slug}.pdf")
             if renamed.exists():
                 log.warning("%s already exists; left %s unrenamed", renamed, source_pdf)
             else:
                 source_pdf.rename(renamed)
+                line = yaml.safe_dump({"source_pdf": str(renamed)}, allow_unicode=True).strip()
+                text = re.sub(r"(?m)^source_pdf: .*$", lambda _: line, text, count=1)
+        target = self._papers(self.root) / f"{slug}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        figures = self._papers(self.staging) / slug
+        if figures.is_dir():
+            shutil.rmtree(self._papers(self.root) / slug, ignore_errors=True)
+            shutil.move(figures, self._papers(self.root) / slug)
+        target.write_text(text, encoding="utf-8")
+        staged.unlink()
+        # the pipeline's own figure output for this paper
+        shutil.rmtree(self.staging / "figures" / str(front.get("sha256", "x"))[:12], ignore_errors=True)
         return target
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
@@ -136,5 +150,6 @@ class Vault:
         return [hit for _, hit in hits[:limit]]
 
     def read(self, slug: str, max_chars: int = 4000) -> str:
+        _check_slug(slug)
         note = self._papers(self.root) / f"{slug}.md"
         return note.read_text(encoding="utf-8")[:max_chars]

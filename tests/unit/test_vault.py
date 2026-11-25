@@ -162,7 +162,10 @@ def test_raw_pdf_renamed_on_commit(vault, tmp_path):
     pdf.write_bytes(b"%PDF")
     staged = vault.stage(doc(source_pdf=str(pdf)))
     vault.commit(staged.slug)
-    assert (tmp_path / f"{staged.slug}.pdf").is_file() and not pdf.exists()
+    renamed = tmp_path / f"{staged.slug}.pdf"
+    assert renamed.is_file() and not pdf.exists()
+    note = (vault.root / "Papers" / f"{staged.slug}.md").read_text(encoding="utf-8")
+    assert yaml.safe_load(note.split("---")[1])["source_pdf"] == str(renamed)
 
 
 def test_raw_pdf_rename_never_overwrites(vault, tmp_path, caplog):
@@ -174,4 +177,26 @@ def test_raw_pdf_rename_never_overwrites(vault, tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
         vault.commit(staged.slug)
     assert target.read_bytes() == b"old" and pdf.read_bytes() == b"new"
+    note = (vault.root / "Papers" / f"{staged.slug}.md").read_text(encoding="utf-8")
+    assert yaml.safe_load(note.split("---")[1])["source_pdf"] == str(pdf)
     assert "already exists" in caplog.text
+
+
+def test_commit_cleans_pipeline_figures_and_staging(vault):
+    document = doc(sha="d" * 64)
+    pipeline_dir = vault.staging / "figures" / ("d" * 12)
+    pipeline_dir.mkdir(parents=True)
+    (pipeline_dir / "fig-1.png").write_bytes(b"png")
+    document.pages[0].figures = [
+        FigureRef(page_no=1, index=1, filename="fig-1.png", width=1, height=1)
+    ]
+    vault.commit(vault.stage(document, figures_dir=pipeline_dir).slug)
+    assert not [p for p in vault.staging.rglob("*") if p.is_file()]
+    assert not pipeline_dir.exists()
+
+
+@pytest.mark.parametrize("bad", ["../x", "a/b", "..", "A b", ""])
+def test_bad_slugs_rejected(vault, bad):
+    for call in (vault.read, vault.diff, vault.commit):
+        with pytest.raises(ValueError):
+            call(bad)
