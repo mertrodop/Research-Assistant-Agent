@@ -85,6 +85,23 @@ class PageResult(BaseModel):
     def warnings(self) -> list[CheckResult]:
         return [c for c in self.checks if not c.passed and c.severity is Severity.WARN]
 
+    @property
+    def problems(self) -> list[str]:
+        """One sentence per failed check; the agent reads these to pick a re-run."""
+        return [_sentence(self, c) for c in self.checks if not c.passed]
+
+
+def _sentence(page: PageResult, check: CheckResult) -> str:
+    evidence = f" ({check.evidence})" if check.evidence else ""
+    return (
+        f"page {page.page_no}: {check.name}: {check.detail}{evidence}; "
+        f"engine {page.engine}, attempt {page.attempt}"
+    )
+
+
+def localize(paper: str, page: PageResult, check: CheckResult) -> str:
+    return f"{paper}, {_sentence(page, check)}"
+
 
 class Reference(BaseModel):
     raw: str

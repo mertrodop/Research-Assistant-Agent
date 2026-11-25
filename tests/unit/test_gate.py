@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from ra_agent.config import GateSettings
-from ra_agent.ocr.gate import has_blockers, run_gate
+from ra_agent.ocr.gate import (
+    check_heading_presence,
+    check_table_cells,
+    has_blockers,
+    run_gate,
+)
+from ra_agent.schema import CheckResult, PageResult, Route, localize
 
 GOOD = """# Introduction
 
@@ -142,3 +148,34 @@ def test_footnote_marker_and_spanning_cell_are_not_errors():
     layer = "We evaluate GPT-4o,10 o1,11 and o3-mini.12 With an extended 36 hour limit the score rises."
     ocr = "We evaluate GPT-4o, 10 o1, 11 and o3-mini. 12\n\n| With an extended 36 hour limit | With an extended 36 hour limit |\n\nthe score rises."
     assert check_numbers(ocr, layer).severity.value != "blocker"
+
+
+def test_table_with_repeated_rows_blocks():
+    t = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n"
+    c = check_table_cells("x\n\n" + t + "\n" + t.split("\n", 2)[2])
+    assert not c.passed and c.severity.value == "blocker" and "table 1" in c.detail
+
+
+def test_table_with_empty_half_blocks():
+    t = "| Field | Paper | n | Field | Paper | n |\n|---|---|---|---|---|---|\n" + "| ML | Raff | 255 |  |  | 30 |\n" * 4
+    assert not check_table_cells(t).passed
+
+
+def test_spanning_cell_repeat_is_fine():
+    t = "| a | b |\n|---|---|\n| With a limit | With a limit |\n| 1 | 2 |\n"
+    assert check_table_cells(t).passed
+
+
+def test_missing_numbered_heading_warns():
+    c = check_heading_presence("plain text only", "2 PaperBench\nIn this section ...")
+    assert not c.passed and c.severity.value == "warn"
+    assert check_heading_presence("## 2 PaperBench\ntext", "2 PaperBench\nIn").passed
+
+
+def test_localize_names_page_engine_and_evidence():
+    page = PageResult(page_no=4, route=Route.DOCLING, markdown="", engine="docling", attempt=1)
+    check = CheckResult(name="numeric_agreement", passed=False, detail="3 numbers not in the text layer", evidence="0, 45, 05")
+    want = "page 4: numeric_agreement: 3 numbers not in the text layer (0, 45, 05); engine docling, attempt 1"
+    assert localize("paperbench", page, check) == "paperbench, " + want
+    page.checks = [check]
+    assert page.problems == [want]

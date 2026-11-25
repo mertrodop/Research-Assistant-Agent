@@ -171,6 +171,58 @@ def check_table_headers(markdown: str) -> CheckResult:
     return _check("table_header", True, detail=f"{len(blocks)} tables have headers")
 
 
+def check_table_cells(markdown: str) -> CheckResult:
+    """Catch duplicated tables and half-empty columns.
+
+    A cell repeated within one row is a column span (docling export) and is fine.
+    """
+    seen: dict[str, int] = {}
+    for number, block in enumerate(_table_blocks(markdown), 1):
+        rows = [_cells(r) for r in block if not _is_separator(r)][1:]
+        keys = ["|".join(r) for r in rows if any(r)]
+        for key in keys:
+            if key in seen and (seen[key] != number or keys.count(key) > 1):
+                return _check(
+                    "table_cells",
+                    False,
+                    detail=f"table {seen[key]}: data row repeated in table {number}",
+                    evidence=key[:160],
+                )
+            seen.setdefault(key, number)
+        if len(rows) >= 3:
+            for col in range(max(len(r) for r in rows)):
+                empty = sum(1 for r in rows if col >= len(r) or not r[col])
+                if empty * 2 >= len(rows):
+                    return _check(
+                        "table_cells",
+                        False,
+                        detail=f"table {number}: column {col + 1} is {empty}/{len(rows)} empty",
+                        evidence=block[0][:160],
+                    )
+    return _check("table_cells", True, detail="no repeated rows or empty columns")
+
+
+_NUMBERED_HEADING = re.compile(r"^\d+(?:\.\d+)*\s+[A-Z].*")
+
+
+def check_heading_presence(markdown: str, text_layer: str) -> CheckResult:
+    """Numbered section titles in the text layer must be Markdown headings."""
+    if not markdown.strip():
+        return _check("heading_presence", True, Severity.INFO, detail="no output")
+    titles = [l.strip() for l in text_layer.splitlines() if _NUMBERED_HEADING.match(l.strip())]
+    headings = [
+        h.lower() for h in re.findall(r"^#{1,6}\s+(.+)$", markdown, re.M)
+    ]
+    missing = [t for t in titles if not any(t.lower()[:40] in h or h in t.lower() for h in headings)]
+    return _check(
+        "heading_presence",
+        not missing,
+        Severity.WARN,
+        detail=f"{len(missing)} of {len(titles)} numbered headings not rendered as headings",
+        evidence="; ".join(missing[:5]),
+    )
+
+
 def check_equations(markdown: str) -> CheckResult:
     problems: list[str] = []
     if markdown.count("$$") % 2:
@@ -339,6 +391,8 @@ def run_gate(
         check_headings(markdown),
         check_tables(markdown),
         check_table_headers(markdown),
+        check_table_cells(markdown),
+        check_heading_presence(markdown, text_layer),
         check_equations(markdown),
         check_doctags(doctags),
         check_numbers(markdown, text_layer),
