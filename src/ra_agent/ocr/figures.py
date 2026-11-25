@@ -66,11 +66,14 @@ def extract_figures(
     max_caption_gap: float = 140.0,
     page_render_fallback: bool = True,
     render_dpi: int = 150,
+    start_index: int = 1,
 ) -> list[Figure]:
     """Save raster figures of one page as PNG and link them to their captions.
 
     Vector-only figures carry no raster object, so when a page has a figure
     caption but no usable raster, the page is rendered once as a fallback.
+    Files are named `fig-N.png` where N is the figure index, counted from
+    `start_index` so the caller can number figures across the whole paper.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -98,7 +101,7 @@ def extract_figures(
                     continue
                 if not raw or not raw.get("image"):
                     continue
-                name = f"p{page_no:03d}_fig{len(seen) + 1}.png"
+                name = f"fig-{start_index + len(figures)}.png"
                 target = out / name
                 pix = fitz.Pixmap(raw["image"])
                 if pix.colorspace and pix.colorspace.n not in (1, 3):
@@ -109,7 +112,7 @@ def extract_figures(
             figures.append(
                 Figure(
                     page_no=page_no,
-                    index=len(figures) + 1,
+                    index=start_index + len(figures),
                     filename=seen[xref],
                     width=int(bbox.width),
                     height=int(bbox.height),
@@ -120,7 +123,7 @@ def extract_figures(
             )
 
         if not figures and captions and page_render_fallback:
-            name = f"p{page_no:03d}_page.png"
+            name = f"fig-{start_index}.png"
             page.get_pixmap(dpi=render_dpi, colorspace=fitz.csRGB, alpha=False).save(
                 out / name
             )
@@ -128,7 +131,7 @@ def extract_figures(
             figures.append(
                 Figure(
                     page_no=page_no,
-                    index=1,
+                    index=start_index,
                     filename=name,
                     width=int(page.rect.width),
                     height=int(page.rect.height),

@@ -7,13 +7,13 @@ from pathlib import Path
 
 from ..config import Settings
 from ..schema import CheckResult, FigureRef, OcrDocument, PageResult, Route, Severity
-from ..llm.client import LlmClient
+from ..llm.client import LlmClient, NullVisionClient
 from .assemble import assemble
 from .critic import critique_page
 from .crossref import CrossrefClient, ReferenceCheck, split_references
 from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engines
 from .figures import extract_figures
-from .interpret import interpret_figures
+from .interpret import describe_figures
 from .refagent import resolve_references
 from .synth import optimize
 from .gate import check_figure_grounding, has_blockers, run_gate
@@ -219,15 +219,20 @@ class OcrPipeline:
         figures: dict[int, list[FigureRef]] = {}
         if figures_dir is not None and self.settings.figures.enabled:
             figures = self._extract_figures(pdf_path, ordered, Path(figures_dir))
-            if self.vision is not None and self.settings.figures.describe:
-                figures = self._interpret_figures(
+            describing = (
+                self.settings.figures.describe
+                and self.vision is not None
+                and not isinstance(self.vision, NullVisionClient)
+            )
+            if describing:
+                figures = self._describe_figures(
                     figures, Path(figures_dir), ordered, sha
                 )
             ordered = [
                 page.model_copy(update={"figures": figures.get(page.page_no, [])})
                 for page in ordered
             ]
-            if self.settings.figures.describe:
+            if describing:
                 checked: list[PageResult] = []
                 for page in ordered:
                     result = check_figure_grounding(page.figures)
@@ -241,7 +246,7 @@ class OcrPipeline:
                         )
                     )
                 ordered = checked
-        markdown = assemble(ordered, figures)
+        markdown = assemble(ordered, figures, "figures")
         references: list[ReferenceCheck] = []
         if self.settings.crossref.enabled:
             references = resolve_references(
@@ -289,7 +294,7 @@ class OcrPipeline:
             year_tolerance=config.year_tolerance,
         )
 
-    def _interpret_figures(
+    def _describe_figures(
         self,
         figures: dict[int, list[FigureRef]],
         image_dir: Path,
@@ -300,16 +305,16 @@ class OcrPipeline:
         if not flat:
             return figures
         texts = {page.page_no: page.markdown for page in pages}
-        interpreted = interpret_figures(
+        described = describe_figures(
             flat,
             image_dir,
             texts,
             self.vision,
             self.settings.vision_extra,
-            sha=sha,
+            sha,
         )
         grouped: dict[int, list[FigureRef]] = {}
-        for figure in interpreted:
+        for figure in described:
             grouped.setdefault(figure.page_no, []).append(figure)
         return grouped
 
@@ -318,6 +323,7 @@ class OcrPipeline:
     ) -> dict[int, list[FigureRef]]:
         config = self.settings.figures
         found: dict[int, list[FigureRef]] = {}
+        count = 0
         for page in pages:
             try:
                 raw = extract_figures(
@@ -329,9 +335,11 @@ class OcrPipeline:
                     max_caption_gap=config.max_caption_gap,
                     page_render_fallback=config.page_render_fallback,
                     render_dpi=config.render_dpi,
+                    start_index=count + 1,
                 )
             except Exception:
                 continue
+            count += len(raw)
             if raw:
                 found[page.page_no] = [
                     FigureRef(

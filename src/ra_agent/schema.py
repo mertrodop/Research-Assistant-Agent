@@ -28,15 +28,13 @@ class CheckResult(BaseModel):
 
 
 class FigureInterpretation(BaseModel):
-    """LLM reading of one figure. Every number must be grounded in the page text."""
+    """Vision reading of one figure. Numbers must be grounded in the page text."""
 
+    kind: Literal["chart", "table", "diagram", "photo", "equation", "other"] = "other"
     summary: str = ""
-    kind: str = ""
-    key_values: list[dict[str, str]] = Field(default_factory=list)
-    takeaways: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
-    model: str = ""
+    markdown: str = ""
     ungrounded: list[str] = Field(default_factory=list)
+    model: str = ""
     error: str = ""
 
     @property

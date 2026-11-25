@@ -153,3 +153,29 @@ def test_native_engine_separates_hanging_indent_entries(tmp_path):
     text, _ = NativeTextEngine().ocr_page(path, 1)
     blocks = [b for b in text.split("\n\n") if b.strip()]
     assert len(blocks) == 2 and blocks[1].startswith("Belz")
+
+
+def test_vision_down_keeps_plain_figures_and_ingest_succeeds(tmp_path):
+    from ra_agent.llm.client import VisionError
+    from tests.unit.test_figures import make_pdf_with_figure
+
+    class DownVision:
+        model = "down"
+
+        def describe(self, image_path, prompt):
+            raise VisionError("endpoint down")
+
+        def complete(self, prompt):
+            raise VisionError("endpoint down")
+
+    config = settings(tmp_path)
+    config.critic.enabled = False
+    config.crossref.enabled = False
+    config.vision_extra.cache_dir = str(tmp_path / "vcache")
+    pdf = make_pdf_with_figure(tmp_path / "fig.pdf")
+    document = OcrPipeline(
+        settings=config, engines=fakes(NativeTextEngine()), vision=DownVision()
+    ).run(pdf, figures_dir=tmp_path / "figs")
+    assert (tmp_path / "figs" / "fig-1.png").is_file()
+    assert "![Figure 1: A bar chart of scores.](figures/fig-1.png)" in document.markdown
+    assert "> ⚠ description unavailable" in document.markdown

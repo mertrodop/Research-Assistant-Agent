@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from ..schema import FigureRef, PageResult
+from .interpret import figure_block
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _HYPHEN_BREAK = re.compile(r"(\w+)-\n(\w+)")
@@ -87,79 +88,36 @@ def dehyphenate(text: str, words: frozenset[str] | None = None) -> str:
     return _HYPHEN_BREAK.sub(lambda match: _join(match, vocabulary), text)
 
 
-def _norm(text: str) -> str:
-    return " ".join(text.split()).lower()
+_MARKER = "<!-- image -->"
 
 
-def _interpretation_lines(figure: FigureRef) -> list[str]:
-    """Render the LLM reading as a blockquote under the image, with its caveats."""
-    reading = figure.interpretation
-    if reading is None:
-        return []
-    if reading.error:
-        return [f"> reading failed: {reading.error}", ""]
-    lines = [f"> **{reading.kind or 'figure'}** — {reading.summary}"]
-    for item in reading.key_values:
-        lines.append(f"> - {item.get('label', '')}: {item.get('value', '')}")
-    for takeaway in reading.takeaways:
-        lines.append(f"> - {takeaway}")
-    if reading.ungrounded:
-        lines.append(
-            f"> ⚠ not corroborated by page text: {', '.join(reading.ungrounded)}"
-        )
-    lines.append("")
-    return lines
+def _place_figures(body: str, figures: list[FigureRef], rel_dir: str) -> str:
+    """Figure k goes at the page's k-th image marker. Spare figures follow the
+    last paragraph; spare markers are dropped."""
+    blocks = [figure_block(figure, rel_dir) for figure in figures]
+    head, *tails = body.split(_MARKER)
+    parts = [head]
+    for position, tail in enumerate(tails):
+        parts.append(blocks[position] if position < len(blocks) else "")
+        parts.append(tail)
+    parts.extend(["\n\n" + block for block in blocks[len(tails) :]])
+    return re.sub(r"\n{3,}", "\n\n", "".join(parts)).strip()
 
 
-def _insert_figures(markdown: str, figures: list[FigureRef]) -> str:
-    """Place each figure image right above the line that carries its caption."""
-    if not figures:
-        return markdown
-    lines = markdown.splitlines()
-    shared: dict[str, int] = {}
-    for figure in figures:
-        key = figure.label or f"Figure {figure.index}"
-        shared[key] = shared.get(key, 0) + 1
-    seen: dict[str, int] = {}
-    pending: list[FigureRef] = []
-    for figure in figures:
-        key = figure.label or f"Figure {figure.index}"
-        seen[key] = seen.get(key, 0) + 1
-        alt = key if shared[key] == 1 else f"{key} ({seen[key]}/{shared[key]})"
-        target = _norm(figure.caption)[:60] if figure.caption else ""
-        block = [f"![{alt}]({figure.rel_path})", ""] + _interpretation_lines(figure)
-        placed = False
-        if target:
-            for index, line in enumerate(lines):
-                if _norm(line).startswith(target):
-                    lines[index:index] = block
-                    placed = True
-                    break
-        if not placed:
-            pending.append(figure)
-
-    if pending:
-        lines.append("")
-        for figure in pending:
-            key = figure.label or f"Figure {figure.index}"
-            alt = key if shared[key] == 1 else f"{key} ({seen[key]}/{shared[key]})"
-            lines.append(f"![{alt}]({figure.rel_path})")
-            lines.append("")
-            lines.extend(_interpretation_lines(figure))
-    return "\n".join(lines).strip()
-
-
-def assemble(pages: list[PageResult], figures: dict[int, list[FigureRef]] | None = None) -> str:
+def assemble(
+    pages: list[PageResult],
+    figures: dict[int, list[FigureRef]] | None = None,
+    rel_dir: str = "figures",
+) -> str:
     ordered = sorted(pages, key=lambda page: page.page_no)
     cleaned = strip_margins(ordered)
     by_page = figures or {}
     parts: list[str] = []
     for page in cleaned:
-        if not page.markdown.strip() and not by_page.get(page.page_no):
-            continue
-        body = dehyphenate(page.markdown)
-        body = _insert_figures(body, by_page.get(page.page_no, []))
-        if body.strip():
+        body = _place_figures(
+            dehyphenate(page.markdown), by_page.get(page.page_no, []), rel_dir
+        )
+        if body:
             parts.append(body)
     return "\n\n".join(parts).strip()
 

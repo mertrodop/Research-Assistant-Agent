@@ -38,135 +38,30 @@ def test_section_tree():
     assert tree == [(1, "A"), (2, "B"), (3, "C")]
 
 
-def test_figure_image_is_inserted_above_its_caption():
-    figures = {
-        1: [
-            FigureRef(
-                page_no=1,
-                index=1,
-                filename="p001_fig1.png",
-                width=400,
-                height=300,
-                caption="Figure 1. A bar chart.",
-                label="Figure 1",
-            )
-        ]
-    }
-    markdown = assemble([page(1, "Body text.\nFigure 1. A bar chart.")], figures)
-    assert "![Figure 1](figures/p001_fig1.png)" in markdown
-    assert markdown.index("![Figure 1]") < markdown.index("Figure 1. A bar chart.")
+def fig(index: int = 1) -> FigureRef:
+    return FigureRef(
+        page_no=1, index=index, filename=f"fig-{index}.png", width=400, height=300
+    )
 
 
-def test_figure_without_caption_is_appended():
-    figures = {
-        1: [
-            FigureRef(
-                page_no=1,
-                index=1,
-                filename="p001_fig1.png",
-                width=400,
-                height=300,
-                caption="",
-                label="",
-            )
-        ]
-    }
-    markdown = assemble([page(1, "Body text.")], figures)
-    assert markdown.startswith("Body text.")
-    assert "![Figure 1](figures/p001_fig1.png)" in markdown
+def test_figure_replaces_image_marker():
+    markdown = assemble([page(1, "A\n\n<!-- image -->\n\nB")], {1: [fig()]}, "figures")
+    assert "<!-- image -->" not in markdown
+    assert markdown.index("A") < markdown.index("![Figure 1") < markdown.index("B")
+    assert "(figures/fig-1.png)" in markdown
 
 
-def test_interpretation_is_rendered_under_image():
-    figures = {
-        1: [
-            FigureRef(
-                page_no=1,
-                index=1,
-                filename="p001_fig1.png",
-                width=400,
-                height=300,
-                caption="Figure 1. Scores.",
-                label="Figure 1",
-                interpretation=FigureInterpretation(
-                    summary="Bar chart of scores.",
-                    kind="chart",
-                    key_values=[{"label": "best", "value": "21%"}],
-                    takeaways=["human baseline is higher"],
-                    ungrounded=["87"],
-                    model="fake",
-                ),
-            )
-        ]
-    }
-    markdown = assemble([page(1, "Figure 1. Scores.")], figures)
-    assert "![Figure 1](figures/p001_fig1.png)" in markdown
-    assert "> **chart** — Bar chart of scores." in markdown
-    assert "> - best: 21%" in markdown
-    assert "> - human baseline is higher" in markdown
-    assert "not corroborated by page text: 87" in markdown
-    assert markdown.index("![Figure 1]") < markdown.index("> **chart**")
+def test_extra_figure_is_appended_and_extra_marker_removed():
+    text = "A\n\n<!-- image -->\n\n<!-- image -->\n\nB"
+    markdown = assemble([page(1, text)], {1: [fig(1)]}, "figures")
+    assert markdown.count("![Figure") == 1
+    assert "<!-- image -->" not in markdown
+    markdown = assemble([page(1, "A\n\nB")], {1: [fig(1), fig(2)]}, "figures")
+    assert markdown.endswith("(figures/fig-2.png)")
+    assert markdown.index("B") < markdown.index("![Figure 1")
 
 
-def test_failed_reading_is_shown_as_warning():
-    figures = {
-        1: [
-            FigureRef(
-                page_no=1,
-                index=1,
-                filename="p001_fig1.png",
-                width=400,
-                height=300,
-                caption="Figure 1. Scores.",
-                label="Figure 1",
-                interpretation=FigureInterpretation(error="HTTP 401", model="fake"),
-            )
-        ]
-    }
-    markdown = assemble([page(1, "Figure 1. Scores.")], figures)
-    assert "> reading failed: HTTP 401" in markdown
-
-
-def test_shared_caption_numbers_panels():
-    figures = {
-        1: [
-            FigureRef(
-                page_no=1,
-                index=1,
-                filename="p001_fig1.png",
-                width=400,
-                height=300,
-                caption="Figure 4. Two panels.",
-                label="Figure 4",
-            ),
-            FigureRef(
-                page_no=1,
-                index=2,
-                filename="p001_fig2.png",
-                width=400,
-                height=300,
-                caption="Figure 4. Two panels.",
-                label="Figure 4",
-            ),
-        ]
-    }
-    markdown = assemble([page(1, "Figure 4. Two panels.")], figures)
-    assert "![Figure 4 (1/2)](figures/p001_fig1.png)" in markdown
-    assert "![Figure 4 (2/2)](figures/p001_fig2.png)" in markdown
-
-
-def test_dehyphenate_keeps_real_hyphens():
-    assert dehyphenate("state-of-the-art") == "state-of-the-art"
-
-
-def test_dehyphenate_keeps_compound_split_across_lines():
-    words = frozenset({"state", "of", "the", "art"})
-    assert dehyphenate("state-\nof-the-art", words) == "state-of-the-art"
-
-
-def test_dehyphenate_joins_broken_word():
-    words = frozenset({"state", "of", "the", "art"})
-    assert dehyphenate("trans-\nformer", words) == "transformer"
-
-
-def test_dehyphenate_without_wordlist_still_joins():
-    assert dehyphenate("docu-\nment", frozenset()) == "document"
+def test_unavailable_description_is_rendered():
+    failed = fig().model_copy(update={"interpretation": FigureInterpretation(error="down")})
+    markdown = assemble([page(1, "A\n\n<!-- image -->")], {1: [failed]}, "figures")
+    assert "> ⚠ description unavailable" in markdown

@@ -10,6 +10,7 @@ from ..llm.client import LlmClient, VisionError
 from ..schema import FigureInterpretation, FigureRef
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_LABEL = re.compile(r"^(?:figure|fig\.?)\s*\d+\s*[.:]?\s*", re.I)
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.M)
 
 PROMPT = """You are reading one figure from a scientific paper.
@@ -24,15 +25,15 @@ Describe only what is visible in the image. Rules:
 - Never invent numbers, axis labels, model names or trends.
 - Every number you report must be readable in the image.
 - If a value is unreadable, omit it instead of guessing.
-- If the image is a logo, icon or decoration, set kind to "decoration" and keep it short.
+- "markdown" holds the figure content as Markdown: a table as a GFM table,
+  a chart as a table of the values you can read, a diagram as a short list of
+  nodes and edges, an equation as LaTeX. Use an empty string for a plain photo.
 
 Answer with strict JSON only, no prose and no code fences:
 {{
+  "kind": "chart|table|diagram|photo|equation|other",
   "summary": "one or two sentences on what the figure shows",
-  "kind": "chart|diagram|table|screenshot|photo|decoration|other",
-  "key_values": [{{"label": "what is measured", "value": "number as printed"}}],
-  "takeaways": ["short factual observation"],
-  "confidence": 0.0
+  "markdown": "figure content as Markdown"
 }}
 """
 
@@ -40,7 +41,7 @@ Answer with strict JSON only, no prose and no code fences:
 COMPACT_HINT = """
 
 Your previous answer was not valid JSON. Reply again with compact JSON only:
-at most 3 key_values, at most 3 takeaways, no newlines inside strings.
+keep markdown under 15 lines and escape newlines inside strings.
 """
 
 
@@ -92,25 +93,17 @@ def _repair_json(text: str) -> str:
     return repaired
 
 
+_KINDS = {"chart", "table", "diagram", "photo", "equation", "other"}
+
+
 def ground(interpretation: FigureInterpretation, evidence: str) -> list[str]:
     """Numbers the model reported that the caption or page text never mentions."""
     known = _numbers(evidence)
-    reported: set[str] = set()
-    for item in interpretation.key_values:
-        reported |= _numbers(str(item.get("value", "")))
-    reported |= _numbers(interpretation.summary)
-    for takeaway in interpretation.takeaways:
-        reported |= _numbers(takeaway)
+    reported = _numbers(interpretation.summary) | _numbers(interpretation.markdown)
     return sorted(number for number in reported if number not in known)
 
 
-def interpret_figure(
-    figure: FigureRef,
-    image_path: str | Path,
-    page_text: str,
-    client: LlmClient,
-    settings: VisionExtra,
-) -> FigureInterpretation:
+def _read(figure: FigureRef, image_path: Path, page_text: str, client: LlmClient) -> FigureInterpretation:
     prompt = PROMPT.format(
         caption=figure.caption or "(none)",
         context=(page_text or "")[:2500],
@@ -131,28 +124,15 @@ def interpret_figure(
                 model=client.model, error=f"invalid JSON: {exc}"[:300]
             )
 
-    key_values = []
-    for item in data.get("key_values") or []:
-        if isinstance(item, dict) and item.get("value") not in (None, ""):
-            key_values.append(
-                {
-                    "label": str(item.get("label", ""))[:120],
-                    "value": str(item.get("value"))[:60],
-                }
-            )
-
-    interpretation = FigureInterpretation(
+    kind = str(data.get("kind", "other"))
+    reading = FigureInterpretation(
+        kind=kind if kind in _KINDS else "other",
         summary=str(data.get("summary", ""))[:600],
-        kind=str(data.get("kind", ""))[:40],
-        key_values=key_values[:12],
-        takeaways=[str(item)[:160] for item in (data.get("takeaways") or [])][:6],
-        confidence=float(data.get("confidence") or 0.0),
+        markdown=str(data.get("markdown", "")).strip()[:4000],
         model=client.model,
     )
-    interpretation.ungrounded = ground(
-        interpretation, f"{figure.caption}\n{page_text}"
-    )
-    return interpretation
+    reading.ungrounded = ground(reading, f"{figure.caption}\n{page_text}")
+    return reading
 
 
 def _cache_path(root: Path, sha: str, filename: str, model: str) -> Path:
@@ -160,49 +140,78 @@ def _cache_path(root: Path, sha: str, filename: str, model: str) -> Path:
     return root / sha / f"{Path(filename).stem}__{slug}.json"
 
 
-def interpret_figures(
+def describe_figure(
+    figure: FigureRef,
+    image_dir: str | Path,
+    page_text: str,
+    client: LlmClient,
+    extra: VisionExtra,
+    sha: str,
+) -> FigureRef:
+    """Attach the vision reading to one figure, using the per-figure disk cache."""
+    cache = _cache_path(Path(extra.cache_dir), sha, figure.filename, client.model)
+    if cache.is_file():
+        try:
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            return figure.model_copy(
+                update={"interpretation": FigureInterpretation.model_validate(data)}
+            )
+        except ValueError:
+            pass  # stale or corrupt cache entry: read the figure again
+
+    image_path = Path(image_dir) / figure.filename
+    if not image_path.is_file():
+        reading = FigureInterpretation(model=client.model, error="image file missing")
+        return figure.model_copy(update={"interpretation": reading})
+    reading = _read(figure, image_path, page_text, client)
+    if not reading.error:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(reading.model_dump_json(indent=1), encoding="utf-8")
+    return figure.model_copy(update={"interpretation": reading})
+
+
+def describe_figures(
     figures: list[FigureRef],
     image_dir: str | Path,
-    page_texts: dict[int, str],
+    texts: dict[int, str],
     client: LlmClient,
-    settings: VisionExtra,
-    sha: str = "",
+    extra: VisionExtra,
+    sha: str,
 ) -> list[FigureRef]:
-    """Interpret every figure in parallel, with a per-figure disk cache."""
+    """Describe every figure in parallel, keeping reading order."""
     if not figures:
         return figures
-    image_dir = Path(image_dir)
-    cache_root = Path(settings.cache_dir)
-
-    def run(figure: FigureRef) -> FigureRef:
-        cache = _cache_path(cache_root, sha, figure.filename, client.model)
-        if cache.is_file():
-            try:
-                data = json.loads(cache.read_text(encoding="utf-8"))
-                return figure.model_copy(
-                    update={"interpretation": FigureInterpretation.model_validate(data)}
-                )
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        image_path = image_dir / figure.filename
-        if not image_path.is_file():
-            return figure.model_copy(
-                update={
-                    "interpretation": FigureInterpretation(
-                        model=client.model, error="image file missing"
-                    )
-                }
+    with ThreadPoolExecutor(max_workers=max(1, extra.concurrency)) as pool:
+        return list(
+            pool.map(
+                lambda f: describe_figure(
+                    f, image_dir, texts.get(f.page_no, ""), client, extra, sha
+                ),
+                figures,
             )
-        interpretation = interpret_figure(
-            figure, image_path, page_texts.get(figure.page_no, ""), client, settings
         )
-        if not interpretation.error:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(
-                interpretation.model_dump_json(indent=1), encoding="utf-8"
-            )
-        return figure.model_copy(update={"interpretation": interpretation})
 
-    with ThreadPoolExecutor(max_workers=max(1, settings.concurrency)) as pool:
-        return list(pool.map(run, figures))
+
+def _alt(figure: FigureRef) -> str:
+    caption = _LABEL.sub("", figure.caption or "").strip()
+    sentence = re.split(r"(?<=[.!?])\s", caption, maxsplit=1)[0].replace("]", ")")
+    return f"Figure {figure.index}: {sentence}" if sentence else f"Figure {figure.index}"
+
+
+def figure_block(figure: FigureRef, rel_dir: str) -> str:
+    """Image line plus a quoted reading; a failed reading gets a single warning line."""
+    lines = [f"![{_alt(figure)}]({rel_dir}/{figure.filename})"]
+    reading = figure.interpretation
+    if reading is None:
+        return lines[0]
+    lines.append("")
+    if reading.error:
+        lines.append("> ⚠ description unavailable")
+        return "\n".join(lines)
+    lines.append(f"> **{reading.kind}**: {reading.summary}")
+    if reading.markdown:
+        lines.append(">")
+        lines.extend(f"> {row}".rstrip() for row in reading.markdown.splitlines())
+    if reading.ungrounded:
+        lines.append(f"> ⚠ not in page text: {', '.join(reading.ungrounded)}")
+    return "\n".join(lines)
