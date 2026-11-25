@@ -28,7 +28,6 @@ def test_extracts_raster_figure_and_links_caption(tmp_path):
     assert figure.label == "Figure 1"
     assert "bar chart" in figure.caption
     assert (out / figure.filename).is_file()
-    assert figure.rel_path == f"figures/{figure.filename}"
 
 
 def test_tiny_images_are_skipped(tmp_path):

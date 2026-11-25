@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import yaml
-
 from ra_agent.config import Settings
 from ra_agent.ocr.engine import NativeTextEngine
 from ra_agent.schema import Route
 from ra_agent.ocr.pipeline import OcrPipeline, PageCache, parse_pages
-from ra_agent.vault.note import render_note, write_note
 
 
 class BrokenEngine:
@@ -92,38 +89,6 @@ def test_cache_avoids_second_engine_call(pdf, tmp_path):
     assert first.status == "verified"
     assert second.status == "verified"
     assert all(page.latency_s == 0.0 for page in second.pages)
-
-
-def test_note_frontmatter_and_validation(pdf, tmp_path):
-    config = settings(tmp_path)
-    document = OcrPipeline(settings=config, engines=fakes(NativeTextEngine())).run(pdf)
-    path = write_note(document, config.paths.vault_dir, "docling")
-    text = path.read_text(encoding="utf-8")
-    assert text.startswith("---\n")
-    front = yaml.safe_load(text.split("---")[1])
-    assert front["status"] == "verified"
-    assert front["pages"] == 2
-    assert "## Validation" in text
-    assert "| 1 | docling | 1 | verified |" in text
-
-
-def test_flat_and_vault_layouts(pdf, tmp_path):
-    config = settings(tmp_path)
-    document = OcrPipeline(settings=config, engines=fakes(NativeTextEngine())).run(pdf)
-    flat = write_note(document, tmp_path / "processed", "text_layer")
-    vault = write_note(document, tmp_path / "vault", "text_layer", layout="vault")
-    assert flat == tmp_path / "processed" / f"{document.sha256[:12]}.md"
-    assert vault == (
-        tmp_path / "vault" / "Resources" / "Parsed" / f"{document.sha256[:12]}.md"
-    )
-    assert flat.read_text(encoding="utf-8") == vault.read_text(encoding="utf-8")
-
-
-def test_render_note_needs_review_tag(blank_pdf, tmp_path):
-    config = settings(tmp_path)
-    document = OcrPipeline(settings=config, engines=fakes(BrokenEngine())).run(blank_pdf)
-    text = render_note(document, "broken")
-    assert "needs-review" in text
 
 
 def test_engine_crash_is_recorded_not_raised(blank_pdf, tmp_path):

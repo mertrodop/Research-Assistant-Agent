@@ -1,28 +1,33 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal
-
 import yaml
 
-from ..schema import NoteFrontmatter, OcrDocument
+from ..schema import NoteFrontmatter, OcrDocument, Route
 
 
-def _frontmatter(document: OcrDocument, engine: str) -> str:
+def _frontmatter(document: OcrDocument, slug: str) -> str:
     verified = sum(1 for page in document.pages if page.status == "verified")
     figures = [figure for page in document.pages for figure in page.figures]
     meta = NoteFrontmatter(
         title=document.title,
         source_pdf=document.source_pdf,
         sha256=document.sha256,
-        ocr_engine=engine,
+        metadata=(
+            "verified"
+            if document.meta and document.meta.source in {"arxiv", "crossref"}
+            else "unverified"
+        ),
+        engines={
+            route.value: sum(1 for page in document.pages if page.route is route)
+            for route in Route
+        },
         pages=len(document.pages),
         verified_pages=verified,
         status=document.status,
         created_at=document.created_at.isoformat(timespec="seconds"),
         tags=["ocr", document.status],
         figures=len(figures),
-        figure_files=[figure.rel_path for figure in figures],
+        figure_files=[f"{slug}/{figure.filename}" for figure in figures],
         figure_readings=sum(
             1
             for figure in figures
@@ -43,6 +48,8 @@ def _frontmatter(document: OcrDocument, engine: str) -> str:
 def _validation(document: OcrDocument) -> str:
     lines = ["## Validation", "", "| page | route | attempt | status | failed checks |", "|---|---|---|---|---|"]
     for page in document.pages:
+        if page.status == "verified" and not page.error:
+            continue
         failed = ", ".join(page.review_reasons) or "-"
         if page.error:
             failed = f"{failed} ({page.error[:80]})"
@@ -53,7 +60,7 @@ def _validation(document: OcrDocument) -> str:
 
 
 def _references(document: OcrDocument) -> str:
-    if not document.references:
+    if all(check.status == "verified" for check in document.references):
         return ""
     lines = [
         "## References check",
@@ -62,6 +69,8 @@ def _references(document: OcrDocument) -> str:
         "|---|---|---|---|---|",
     ]
     for check in document.references:
+        if check.status == "verified":
+            continue
         raw = check.reference.raw.replace("|", "/")[:120]
         matched = (check.matched_title or check.detail).replace("|", "/")[:80]
         lines.append(
@@ -87,12 +96,15 @@ def _doc_checks(document: OcrDocument) -> str:
     return "\n".join(lines)
 
 
-def render_note(document: OcrDocument, engine: str) -> str:
+def render_note(document: OcrDocument, slug: str) -> str:
+    # The pipeline writes figure links as figures/fig-N.png; the vault keeps them
+    # beside the note in <slug>/.
+    body = document.markdown.replace("](figures/", f"]({slug}/")
     parts = [
-        _frontmatter(document, engine),
+        _frontmatter(document, slug),
         f"# {document.title}",
         "",
-        document.markdown,
+        body,
         "",
         _validation(document),
     ]
@@ -100,23 +112,3 @@ def render_note(document: OcrDocument, engine: str) -> str:
         if section:
             parts.extend(["", section])
     return "\n".join(parts).strip() + "\n"
-
-
-def note_filename(document: OcrDocument) -> str:
-    return f"{document.sha256[:12]}.md"
-
-
-def write_note(
-    document: OcrDocument,
-    out_dir: str | Path,
-    engine: str,
-    layout: Literal["flat", "vault"] = "flat",
-) -> Path:
-    """flat -> <out_dir>/<sha12>.md, vault -> <out_dir>/Resources/Parsed/<sha12>.md."""
-    root = Path(out_dir)
-    if layout == "vault":
-        root = root / "Resources" / "Parsed"
-    target = root / note_filename(document)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render_note(document, engine), encoding="utf-8")
-    return target

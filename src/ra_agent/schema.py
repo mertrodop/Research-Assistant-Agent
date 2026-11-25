@@ -53,10 +53,6 @@ class FigureRef(BaseModel):
     kind: str = "raster"
     interpretation: FigureInterpretation | None = None
 
-    @property
-    def rel_path(self) -> str:
-        return f"figures/{self.filename}"
-
 
 class PageResult(BaseModel):
     page_no: int
@@ -156,10 +152,11 @@ class NoteFrontmatter(BaseModel):
     title: str
     source_pdf: str
     sha256: str
-    ocr_engine: str
     pages: int
     verified_pages: int
     status: Literal["verified", "needs-review"]
+    metadata: Literal["verified", "unverified"] = "unverified"
+    engines: dict[str, int] = Field(default_factory=dict)
     created_at: str
     tags: list[str] = Field(default_factory=list)
     figures: int = 0

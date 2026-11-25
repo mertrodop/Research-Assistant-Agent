@@ -9,7 +9,7 @@ from .config import Settings, load_env_file
 from .llm.client import build_llm
 from .ocr.pipeline import OcrPipeline, parse_pages
 from .ocr.render import pdf_sha256
-from .vault.note import write_note
+from .vault import Vault
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -25,9 +25,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument(
         "--out", default=None, help="output dir (default: staging)"
-    )
-    ingest.add_argument(
-        "--vault", default=None, help="Obsidian vault root (Resources/Parsed layout)"
     )
     ingest.add_argument("--no-write", action="store_true")
     ingest.add_argument("--no-figures", action="store_true")
@@ -89,6 +86,11 @@ def _summary(document) -> str:
     return "\n".join(lines)
 
 
+def _stage(settings: Settings, out, document, figures_dir) -> Path:
+    vault = Vault(Path(settings.paths.vault_dir), Path(out))
+    return vault.stage(document, figures_dir).note_path
+
+
 def _ingest(args, settings: Settings) -> int:
     pipeline = OcrPipeline(
         settings=settings,
@@ -102,14 +104,7 @@ def _ingest(args, settings: Settings) -> int:
         args.pdf, pages=parse_pages(args.pages), figures_dir=figures_dir
     )
 
-    note_path = None
-    if not args.no_write:
-        if args.vault:
-            note_path = write_note(
-                document, args.vault, "docling", layout="vault"
-            )
-        else:
-            note_path = write_note(document, out, "docling")
+    note_path = None if args.no_write else _stage(settings, out, document, figures_dir)
 
     if args.as_json:
         payload = document.model_dump(mode="json")
@@ -139,7 +134,7 @@ def _batch(args, settings: Settings) -> int:
         if not args.no_figures:
             figures_dir = Path(out) / "figures" / pdf_sha256(pdf)[:12]
         document = pipeline.run(pdf, figures_dir=figures_dir)
-        note_path = None if args.no_write else write_note(document, out, "docling")
+        note_path = None if args.no_write else _stage(settings, out, document, figures_dir)
         print(_summary(document))
         if note_path:
             print(f"note     : {note_path}\n")

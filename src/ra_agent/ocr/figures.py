@@ -21,10 +21,6 @@ class Figure:
     label: str = ""
     kind: str = "raster"
 
-    @property
-    def rel_path(self) -> str:
-        return f"figures/{self.filename}"
-
 
 def _caption_blocks(page: fitz.Page) -> list[tuple[fitz.Rect, str]]:
     blocks: list[tuple[fitz.Rect, str]] = []

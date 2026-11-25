@@ -1,3 +1,4 @@
-from .note import render_note, write_note
+from .note import render_note
+from .store import StagedNote, Vault, slugify
 
-__all__ = ["render_note", "write_note"]
+__all__ = ["StagedNote", "Vault", "render_note", "slugify"]

@@ -142,8 +142,12 @@ def build_tools(settings: Settings, pipeline: OcrPipeline | None = None) -> dict
         }
 
     def read_note(args: ReadNoteArgs) -> dict:
-        root = Path(settings.paths.staging_dir)
-        matches = sorted(root.glob(f"{args.sha}*.md"))
+        root = Path(settings.paths.staging_dir) / "Papers"
+        matches = [
+            note
+            for note in sorted(root.glob("*.md"))
+            if f"sha256: {args.sha}" in note.read_text(encoding="utf-8")[:2000]
+        ]
         if not matches:
             raise ToolError(f"no processed note for sha prefix {args.sha}")
         text = matches[0].read_text(encoding="utf-8")
