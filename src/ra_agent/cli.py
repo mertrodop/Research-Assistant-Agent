@@ -144,38 +144,9 @@ def _batch(args, settings: Settings) -> int:
 
 
 def _agent(args, settings: Settings) -> int:
-    from .agent import Agent, build_tools
-    from .llm.client import build_llm
-
-    if args.max_steps:
-        settings.agent.max_steps = args.max_steps
-    if args.model:
-        settings.models["agent"].model = args.model
-    if args.base_url:
-        settings.models["agent"].base_url = args.base_url
-
-    client = build_llm(settings.models["agent"])
-    tools = build_tools(settings)
-    run = Agent(client, tools, settings.agent).run(args.task)
-
-    trace = Path(settings.paths.staging_dir) / "traces" / run.trace_name()
-    run.save(trace)
-    if args.as_json:
-        payload = run.to_dict()
-        payload["trace"] = str(trace)
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        for step in run.steps:
-            mark = "ok " if not step.error else "err"
-            print(f"[{step.index}] {mark} {step.action or '-'} {step.args or ''}")
-            if step.thought:
-                print(f"      thought: {step.thought}")
-            if step.error:
-                print(f"      error  : {step.error}")
-        print(f"\nstopped  : {run.stopped}")
-        print(f"answer   : {run.answer or '-'}")
-        print(f"trace    : {trace}")
-    return 0 if run.ok else 1
+    # the LangGraph agent (ra_agent.agent.build_graph) gets its CLI in the next task
+    print("ra agent: not wired to the LangGraph agent yet", file=sys.stderr)
+    return 2
 
 
 def main(argv: list[str] | None = None) -> int:

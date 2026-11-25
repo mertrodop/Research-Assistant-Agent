@@ -295,6 +295,30 @@ class Workspace:
             "summary": f"staged {staged.slug} ({staged.status}), diff {len(diff)} chars",
         }
 
+    # -- fallback (called by the agent graph, not exposed as a tool)
+    @_tool
+    def fallback_ingest(self, paper: str) -> dict:
+        """Deterministic ingest: no figure descriptions, staged as needs-review, never committed."""
+        try:
+            doc = self._doc(paper)
+        except ToolError:  # not ingested yet: treat it as a PDF name
+            path = self._pdf(paper if paper.lower().endswith(".pdf") else f"{paper}.pdf")
+            figures = self.settings.figures
+            describe, figures.describe = figures.describe, False
+            try:
+                doc = self.pipeline.run(path, figures_dir=self.staging / "figures" / pdf_sha256(path)[:12])
+            finally:
+                figures.describe = describe
+        doc = doc.model_copy(update={"status": "needs-review"})
+        staged = self.vault.stage(doc, self._figures_dir(doc))
+        self._save(staged.slug, doc)
+        return {
+            "slug": staged.slug,
+            "status": doc.status,
+            "handle": str(staged.note_path),
+            "summary": f"fallback staged {staged.slug} as needs-review; nothing written to the vault",
+        }
+
     # -- write (gated by human approval in the agent)
     @_tool
     def commit_note(self, paper: str) -> dict:

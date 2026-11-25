@@ -1,33 +1,10 @@
 import json
 
-import pytest
-
 from conftest import make_pdf
-from ra_agent.config import Settings
+
 from ra_agent.llm.client import NullVisionClient
-from ra_agent.ocr.engine import NativeTextEngine
-from ra_agent.schema import CheckResult, Route, Severity
+from ra_agent.schema import CheckResult, Severity
 from ra_agent.tools import TOOL_KINDS, Workspace
-
-
-@pytest.fixture
-def ws(tmp_path, monkeypatch):
-    raw = tmp_path / "raw"
-    raw.mkdir()
-    make_pdf(raw / "paper.pdf")
-    settings = Settings()
-    settings.paths.raw_dir = str(raw)
-    settings.paths.vault_dir = str(tmp_path / "vault")
-    settings.paths.staging_dir = str(tmp_path / "staging")
-    settings.paths.memory_dir = str(tmp_path / "memory")
-    settings.pipeline.cache_dir = str(tmp_path / "cache")
-    settings.crossref.cache_dir = str(tmp_path / "crossref")
-    # no network: no external record, no references
-    monkeypatch.setattr("ra_agent.ocr.synth.lookup", lambda meta, crossref: None)
-    monkeypatch.setattr("ra_agent.ocr.pipeline.resolve_references", lambda *a, **k: [])
-    monkeypatch.setattr("ra_agent.tools.resolve_references", lambda *a, **k: [])
-    engines = {route: NativeTextEngine() for route in Route}
-    return Workspace(settings, engines=engines, vision=NullVisionClient())
 
 
 def small(result):

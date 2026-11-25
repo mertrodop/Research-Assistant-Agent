@@ -73,7 +73,7 @@ Obsidian layout: `vault/Resources/Parsed/<sha12>.md`.
 | Retry / circuit breaker | `ocr/pipeline.py` | code: DPI ladder 144 -> 216 -> 288, <= 3 attempts |
 | Document evaluator-optimizer | `ocr/synth.py` | code: draft identity, compare to arXiv/Crossref, apply fix list, <= 3 iterations |
 | Note | `vault/note.py` | code |
-| Agent loop | `agent/loop.py` + `agent/tools.py` | LLM proposes one action, code validates and stops |
+| Agent | `agent/graph.py` + `agent/guard.py` | LangGraph ReAct: model proposes, guard validates, human approves writes, code enforces limits |
 
 Tier 1 checks: `non_empty`, `printable_ratio`, `repetition_loop`, `coverage`,
 `heading_levels`, `table_columns`, `table_header`, `equation_delimiters`,
