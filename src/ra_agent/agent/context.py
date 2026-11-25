@@ -34,6 +34,8 @@ def fit_context(
         if i >= protected_from or i == first_human or not isinstance(m, ToolMessage):
             continue
         text = str(m.content)
+        if text.startswith("[evicted] "):  # idempotent: already a stub
+            continue
         stub = f"[evicted] {text[:120]} (full result: {_handle(text)})"
         out[i] = m.model_copy(update={"content": stub})
         evicted.append(text)

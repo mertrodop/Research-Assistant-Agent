@@ -68,3 +68,11 @@ def test_fit_context_noop_and_no_handle():
     assert fit_context(msgs, budget=10**6, keep_last=4) == (msgs, [])
     out, _ = fit_context(msgs, budget=200, keep_last=1)
     assert "(full result: in episode)" in out[5].content
+
+
+def test_fit_context_idempotent():
+    out, ev = fit_context(_msgs(), budget=200, keep_last=1)
+    again, ev2 = fit_context(out, budget=200, keep_last=1)
+    assert ev and ev2 == []
+    assert [m.content for m in again] == [m.content for m in out]
+    assert "(full result: h1)" in again[3].content
