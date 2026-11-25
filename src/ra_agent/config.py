@@ -41,12 +41,13 @@ class PipelineSettings(BaseModel):
     concurrency: int = 2
     max_attempts: int = 3
     cache_dir: str = ".cache/ocr"
-    vault_dir: str = "vault"
 
 
-class DataSettings(BaseModel):
+class PathSettings(BaseModel):
     raw_dir: str = "data/raw"
-    processed_dir: str = "data/processed"
+    vault_dir: str = "vault"
+    staging_dir: str = "staging"
+    memory_dir: str = "memory"
 
 
 class FigureSettings(BaseModel):
@@ -56,20 +57,23 @@ class FigureSettings(BaseModel):
     max_caption_gap: float = 140.0
     page_render_fallback: bool = True
     render_dpi: int = 150
+    describe: bool = True  # interpret figures with the vision model
 
 
-class VisionSettings(BaseModel):
-    """OpenAI-compatible vision endpoint. Off by default: it costs tokens."""
+class ModelSettings(BaseModel):
+    """One OpenAI-compatible endpoint (OpenRouter, vLLM, Ollama, LM Studio)."""
 
-    enabled: bool = False
-    model: str = "google/gemini-2.5-flash"
     base_url: str = "https://openrouter.ai/api/v1"
+    model: str = "qwen/qwen3-vl-8b-instruct"
     api_key_env: str = "OPEN_ROUTER_API_KEY"
-    timeout_s: float = 90.0
-    max_tokens: int = 2000
     temperature: float = 0.0
-    concurrency: int = 2
+    max_tokens: int = 2000  # reasoning models spend part of it before answering
+    timeout_s: float = 90.0
+
+
+class VisionExtra(BaseModel):
     cache_dir: str = ".cache/figures"
+    concurrency: int = 2
     max_image_side: int = 1400
 
 
@@ -109,12 +113,13 @@ class MetaSettings(BaseModel):
 
 
 class AgentSettings(BaseModel):
-    """Tool-calling loop. Code owns the stop conditions, the model only proposes."""
+    """Agent loop limits. Code owns the stop conditions, the model only proposes."""
 
-    enabled: bool = False
-    max_steps: int = 8
+    max_steps: int = 12
     max_consecutive_errors: int = 2
-    trace_dir: str = "data/processed/traces"
+    max_invalid_calls: int = 2
+    context_budget: int = 6000
+    keep_last_turns: int = 4
 
 
 class Settings(BaseModel):
@@ -123,9 +128,12 @@ class Settings(BaseModel):
     engine: EngineSettings = Field(default_factory=EngineSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
-    data: DataSettings = Field(default_factory=DataSettings)
+    paths: PathSettings = Field(default_factory=PathSettings)
     figures: FigureSettings = Field(default_factory=FigureSettings)
-    vision: VisionSettings = Field(default_factory=VisionSettings)
+    models: dict[str, ModelSettings] = Field(
+        default_factory=lambda: {"agent": ModelSettings(), "vision": ModelSettings()}
+    )
+    vision_extra: VisionExtra = Field(default_factory=VisionExtra)
     critic: CriticSettings = Field(default_factory=CriticSettings)
     crossref: CrossrefSettings = Field(default_factory=CrossrefSettings)
     references: ReferenceSettings = Field(default_factory=ReferenceSettings)

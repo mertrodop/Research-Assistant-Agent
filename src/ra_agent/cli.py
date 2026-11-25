@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .config import Settings, load_env_file
-from .llm.client import build_vision_client
+from .llm.client import build_llm
 from .ocr.engine import build_engine
 from .ocr.pipeline import OcrPipeline, parse_pages
 from .ocr.render import pdf_sha256
@@ -14,7 +14,7 @@ from .vault.note import write_note
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ra-ocr", description="Research Assistant OCR pipeline")
+    parser = argparse.ArgumentParser(prog="ra", description="Research Assistant OCR pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
 
     ingest = sub.add_parser("ingest", help="OCR a PDF into a processed note")
@@ -26,7 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--device", choices=["auto", "cpu", "cuda", "mps", "xpu"], default=None
     )
     ingest.add_argument(
-        "--out", default=None, help="output dir (default: data/processed)"
+        "--out", default=None, help="output dir (default: staging)"
     )
     ingest.add_argument(
         "--vault", default=None, help="Obsidian vault root (Resources/Parsed layout)"
@@ -97,9 +97,9 @@ def _ingest(args, settings: Settings) -> int:
     pipeline = OcrPipeline(
         settings=settings,
         engine=build_engine(settings.engine),
-        vision=build_vision_client(settings.vision),
+        vision=build_llm(settings.models["vision"]),
     )
-    out = args.out or settings.data.processed_dir
+    out = args.out or settings.paths.staging_dir
     figures_dir = None
     if not args.no_figures:
         figures_dir = Path(out) / "figures" / pdf_sha256(args.pdf)[:12]
@@ -128,16 +128,16 @@ def _ingest(args, settings: Settings) -> int:
 
 
 def _batch(args, settings: Settings) -> int:
-    root = Path(args.dir or settings.data.raw_dir)
+    root = Path(args.dir or settings.paths.raw_dir)
     pdfs = sorted(root.glob("*.pdf"))
     if not pdfs:
         print(f"no PDFs under {root}", file=sys.stderr)
         return 2
-    out = args.out or settings.data.processed_dir
+    out = args.out or settings.paths.staging_dir
     pipeline = OcrPipeline(
         settings=settings,
         engine=build_engine(settings.engine),
-        vision=build_vision_client(settings.vision),
+        vision=build_llm(settings.models["vision"]),
     )
     failures = 0
     for pdf in pdfs:
@@ -156,22 +156,20 @@ def _batch(args, settings: Settings) -> int:
 
 def _agent(args, settings: Settings) -> int:
     from .agent import Agent, build_tools
-    from .llm.client import build_vision_client
+    from .llm.client import build_llm
 
-    settings.agent.enabled = True
     if args.max_steps:
         settings.agent.max_steps = args.max_steps
     if args.model:
-        settings.vision.model = args.model
+        settings.models["agent"].model = args.model
     if args.base_url:
-        settings.vision.base_url = args.base_url
-    settings.vision.enabled = True
+        settings.models["agent"].base_url = args.base_url
 
-    client = build_vision_client(settings.vision)
+    client = build_llm(settings.models["agent"])
     tools = build_tools(settings)
     run = Agent(client, tools, settings.agent).run(args.task)
 
-    trace = Path(settings.agent.trace_dir) / run.trace_name()
+    trace = Path(settings.paths.staging_dir) / "traces" / run.trace_name()
     run.save(trace)
     if args.as_json:
         payload = run.to_dict()
@@ -199,20 +197,18 @@ def main(argv: list[str] | None = None) -> int:
         settings.engine.name = args.engine
     if getattr(args, "device", None):
         settings.engine.device = args.device
-    if getattr(args, "figures_llm", False):
-        settings.vision.enabled = True
+    if hasattr(args, "figures_llm"):
+        settings.figures.describe = args.figures_llm
     if getattr(args, "vision_model", None):
-        settings.vision.model = args.vision_model
+        settings.models["vision"].model = args.vision_model
     if getattr(args, "vision_base_url", None):
-        settings.vision.base_url = args.vision_base_url
+        settings.models["vision"].base_url = args.vision_base_url
     if getattr(args, "critic", False):
         settings.critic.enabled = True
-        settings.vision.enabled = True
     if getattr(args, "crossref", False):
         settings.crossref.enabled = True
     if getattr(args, "refs_llm", False):
         settings.references.use_llm = True
-        settings.vision.enabled = True
     if getattr(args, "refs_attempts", None):
         settings.references.max_attempts = args.refs_attempts
     if args.command == "batch":

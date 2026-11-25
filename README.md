@@ -24,15 +24,15 @@ Without `docling` the pipeline still runs with `--engine native` (text-layer PDF
 ## Usage
 
 ```bash
-ra-ocr batch                                   # data/raw -> data/processed
-ra-ocr batch --engine native                   # fast path for text-layer PDFs
-ra-ocr batch --figures-llm                     # interpret figures with a vision model
-ra-ocr ingest data/raw/2504.01848.pdf          # single PDF
-ra-ocr ingest paper.pdf --pages 1-3,7          # page selection
-ra-ocr ingest paper.pdf --device cpu           # for models that do not fit in 2 GB VRAM
-ra-ocr ingest paper.pdf --vault ./vault        # Obsidian vault root
-ra-ocr ingest paper.pdf --json                 # machine-readable output
-ra-ocr ingest paper.pdf --no-figures           # disable figure extraction
+ra batch                                   # data/raw -> staging
+ra batch --engine native                   # fast path for text-layer PDFs
+ra batch --figures-llm                     # interpret figures with a vision model
+ra ingest data/raw/paperbench-evaluating-ais-ability-to-replicate-ai-research.pdf          # single PDF
+ra ingest paper.pdf --pages 1-3,7          # page selection
+ra ingest paper.pdf --device cpu           # for models that do not fit in 2 GB VRAM
+ra ingest paper.pdf --vault ./vault        # Obsidian vault root
+ra ingest paper.pdf --json                 # machine-readable output
+ra ingest paper.pdf --no-figures           # disable figure extraction
 ```
 
 Exit code: `0` when every page is verified, `1` when at least one page is `#needs-review`.
@@ -48,10 +48,10 @@ data/
 
 `raw/` is append-only: if a PDF changes its sha256 changes, so the cache and the output
 file get a new name and the old record is never overwritten. `processed/` is fully
-reproducible: delete it and rerun `ra-ocr batch`. Details: `data/README.md`.
+reproducible: delete it and rerun `ra batch`. Details: `data/README.md`.
 
-The repository ships two real papers: `2504.01848.pdf` (PaperBench) and
-`2409.11363.pdf` (CORE-Bench), both cited in the motivation on slide 2.
+The repository ships two real papers: `paperbench-evaluating-ais-ability-to-replicate-ai-research.pdf` (PaperBench) and
+`core-bench-...-reproducibility.pdf` (CORE-Bench), both cited in the motivation on slide 2.
 
 Every output carries YAML frontmatter (`sha256`, `ocr_engine`, `pages`, `verified_pages`,
 `status`), a markdown body, and a per-page `## Validation` table. Use `--vault` for the
@@ -146,9 +146,9 @@ or `.env` through `vision.api_key_env` (default `OPEN_ROUTER_API_KEY`) and never
 into the code.
 
 ```bash
-ra-ocr ingest paper.pdf --figures-llm
-ra-ocr batch --figures-llm --vision-model google/gemini-2.5-flash
-ra-ocr ingest paper.pdf --figures-llm --vision-base-url http://localhost:11434/v1
+ra ingest paper.pdf --figures-llm
+ra batch --figures-llm --vision-model google/gemini-2.5-flash
+ra ingest paper.pdf --figures-llm --vision-base-url http://localhost:11434/v1
 ```
 
 Readings are cached under `.cache/figures/<sha12>/<figure>__<model>.json`, so the same
@@ -174,7 +174,7 @@ same runtime version.
 
 ```bash
 vllm serve ibm-granite/granite-vision-3.1-2b --guided-json --seed 42
-ra-ocr batch --figures-llm --vision-model ibm-granite/granite-vision-3.1-2b \
+ra batch --figures-llm --vision-model ibm-granite/granite-vision-3.1-2b \
              --vision-base-url http://localhost:8000/v1
 ```
 
@@ -250,16 +250,16 @@ DOI does not waste an attempt. Every check records its `strategy` and its `attem
 and the note shows both in the `## References check` table.
 
 ```bash
-ra-ocr batch --crossref
-ra-ocr batch --crossref --refs-llm --refs-attempts 5
-ra-ocr ingest paper.pdf --crossref --json
+ra batch --crossref
+ra batch --crossref --refs-llm --refs-attempts 5
+ra ingest paper.pdf --crossref --json
 ```
 
 Results are cached under `.cache/crossref`, so reruns stay offline.
 
 ## Agent loop
 
-`ra-ocr agent` puts the LLM at the centre of the system as a tool-calling
+`ra agent` puts the LLM at the centre of the system as a tool-calling
 orchestrator. The model proposes one action per step; code validates it, runs it, and
 decides when to stop.
 
@@ -268,9 +268,9 @@ perceive -> propose -> validate -> act -> observe -> reflect -> repeat
 ```
 
 ```bash
-ra-ocr agent "List the papers under data/raw and report the one with the most pages."
-ra-ocr agent "Run the Tier 1 gate on page 1 of data/raw/2504.01848.pdf." --engine native
-ra-ocr agent "..." --max-steps 6 --json
+ra agent "List the papers under data/raw and report the one with the most pages."
+ra agent "Run the Tier 1 gate on page 1 of data/raw/paperbench-evaluating-ais-ability-to-replicate-ai-research.pdf." --engine native
+ra agent "..." --max-steps 6 --json
 ```
 
 The model answers with strict JSON, either a tool call or a finish:
@@ -287,7 +287,7 @@ The model answers with strict JSON, either a tool call or a finish:
 | `gate` | `pdf`, `page` | failing checks, blockers, warnings |
 | `references` | `pdf`, `max_attempts` | Crossref status counts and unresolved entries |
 | `read_note` | `sha` | processed note path and head |
-| `write_report` | `name`, `body` | markdown report under `data/processed/reports` |
+| `write_report` | `name`, `body` | markdown report under `staging/reports` |
 
 Every tool declares a pydantic argument model, so a malformed proposal is rejected by
 code before anything runs. A tool never raises: failures come back as observations, which
@@ -305,7 +305,7 @@ Circuit breakers, all in code:
 | `max_consecutive_errors` failing tools | `tool_errors` |
 | LLM endpoint unreachable | `llm_error` |
 
-Each run writes a replayable trace to `data/processed/traces/<timestamp>-<stopped>-<slug>.json`
+Each run writes a replayable trace to `staging/traces/<timestamp>-<stopped>-<slug>.json`
 with every thought, action, argument and observation. Exit code is `0` only when the run
 finished with an answer.
 
@@ -314,7 +314,7 @@ finished with an answer.
 Values in `config/pipeline.yaml` are loaded into the `Settings` model:
 
 ```bash
-ra-ocr ingest paper.pdf --config config/pipeline.yaml
+ra ingest paper.pdf --config config/pipeline.yaml
 ```
 
 On machines with 2 GB VRAM start with `engine.page_batch_size: 1` and

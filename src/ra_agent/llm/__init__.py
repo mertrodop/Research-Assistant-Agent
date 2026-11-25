@@ -3,7 +3,7 @@ from .client import (
     NullVisionClient,
     OpenAICompatibleVisionClient,
     VisionError,
-    build_vision_client,
+    build_llm,
 )
 
 __all__ = [
@@ -11,5 +11,5 @@ __all__ = [
     "VisionError",
     "NullVisionClient",
     "OpenAICompatibleVisionClient",
-    "build_vision_client",
+    "build_llm",
 ]

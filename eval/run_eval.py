@@ -222,14 +222,13 @@ class CachingClient:
 
 def eval_critic(n_pages: int) -> dict:
     from ra_agent.config import load_env_file
-    from ra_agent.llm.client import build_vision_client
+    from ra_agent.llm.client import build_llm
     from ra_agent.ocr.critic import critique_page
     from ra_agent.ocr.render import render_page
 
     load_env_file(ROOT / ".env")
     settings = SETTINGS.model_copy(deep=True)
-    settings.vision.enabled = True
-    client = CachingClient(build_vision_client(settings.vision), CACHE / "critic" / "replies")
+    client = CachingClient(build_llm(settings.models["vision"]), CACHE / "critic" / "replies")
     native = NativeTextEngine()
     variants = {
         "clean": lambda t, r: t,
@@ -288,7 +287,7 @@ def eval_critic(n_pages: int) -> dict:
                 "gate_block_rate": round(sum(r["gate_blocked"] for r in sel) / len(sel), 3),
                 "gate_flag_rate": round(sum(r["gate_flagged"] for r in sel) / len(sel), 3),
             }
-    return {"model": settings.vision.model, "dpi": settings.critic.dpi, "summary": summary, "rows": rows}
+    return {"model": settings.models["vision"].model, "dpi": settings.critic.dpi, "summary": summary, "rows": rows}
 
 
 # --- Part 2: Granite-Docling against the text layer ---------------------------

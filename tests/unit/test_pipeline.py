@@ -29,7 +29,7 @@ def settings(tmp_path) -> Settings:
     config = Settings()
     config.engine.name = "native"
     config.pipeline.cache_dir = str(tmp_path / "cache")
-    config.pipeline.vault_dir = str(tmp_path / "vault")
+    config.paths.vault_dir = str(tmp_path / "vault")
     config.pipeline.concurrency = 2
     return config
 
@@ -76,7 +76,7 @@ def test_cache_avoids_second_engine_call(pdf, tmp_path):
 def test_note_frontmatter_and_validation(pdf, tmp_path):
     config = settings(tmp_path)
     document = OcrPipeline(settings=config).run(pdf)
-    path = write_note(document, config.pipeline.vault_dir, "native_text")
+    path = write_note(document, config.paths.vault_dir, "native_text")
     text = path.read_text(encoding="utf-8")
     assert text.startswith("---\n")
     front = yaml.safe_load(text.split("---")[1])

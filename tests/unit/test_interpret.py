@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ra_agent.config import VisionSettings
+from ra_agent.config import VisionExtra
 from ra_agent.ocr.gate import check_figure_grounding
 from ra_agent.ocr.interpret import ground, interpret_figure, interpret_figures
 from ra_agent.schema import FigureInterpretation, FigureRef
@@ -61,7 +61,7 @@ def test_interpret_figure_parses_json(tmp_path):
     image = tmp_path / "p001_fig1.png"
     image.write_bytes(b"png")
     reading = interpret_figure(
-        figure(), image, "The best agent reaches 21%.", FakeClient(), VisionSettings()
+        figure(), image, "The best agent reaches 21%.", FakeClient(), VisionExtra()
     )
     assert reading.kind == "chart"
     assert reading.key_values[0]["value"] == "21%"
@@ -74,7 +74,7 @@ def test_interpret_figure_strips_code_fence(tmp_path):
     image.write_bytes(b"png")
     client = FakeClient(f"```json\n{GOOD_JSON}\n```")
     reading = interpret_figure(
-        figure(), image, "21%", client, VisionSettings()
+        figure(), image, "21%", client, VisionExtra()
     )
     assert reading.error == ""
     assert reading.summary
@@ -84,7 +84,7 @@ def test_invalid_json_is_recorded_not_raised(tmp_path):
     image = tmp_path / "p001_fig1.png"
     image.write_bytes(b"png")
     reading = interpret_figure(
-        figure(), image, "21%", FakeClient("I cannot read this."), VisionSettings()
+        figure(), image, "21%", FakeClient("I cannot read this."), VisionExtra()
     )
     assert "invalid JSON" in reading.error
     assert not reading.ok
@@ -96,7 +96,7 @@ def test_missing_image_is_recorded(tmp_path):
         tmp_path,
         {1: "21%"},
         FakeClient(),
-        VisionSettings(cache_dir=str(tmp_path / "cache")),
+        VisionExtra(cache_dir=str(tmp_path / "cache")),
         sha="abc",
     )[0].interpretation
     assert reading.error == "image file missing"
@@ -106,7 +106,7 @@ def test_cache_prevents_second_call(tmp_path):
     image_dir = tmp_path / "figs"
     image_dir.mkdir()
     (image_dir / "p001_fig1.png").write_bytes(b"png")
-    settings = VisionSettings(cache_dir=str(tmp_path / "cache"))
+    settings = VisionExtra(cache_dir=str(tmp_path / "cache"))
     client = FakeClient()
 
     first = interpret_figures([figure()], image_dir, {1: "21%"}, client, settings, sha="abc")
@@ -121,7 +121,7 @@ def test_truncated_json_is_repaired(tmp_path):
     image.write_bytes(b"png")
     truncated = '{"summary": "chart of 21%", "kind": "chart", "key_values": [{"label": "best", "value": "21%"'
     reading = interpret_figure(
-        figure(), image, "21%", FakeClient(truncated), VisionSettings()
+        figure(), image, "21%", FakeClient(truncated), VisionExtra()
     )
     assert reading.error == ""
     assert reading.summary == "chart of 21%"
@@ -132,7 +132,7 @@ def test_trailing_comma_is_repaired(tmp_path):
     image.write_bytes(b"png")
     trailing = '{"summary": "chart of 21%", "kind": "chart", "takeaways": ["a",],}'
     reading = interpret_figure(
-        figure(), image, "21%", FakeClient(trailing), VisionSettings()
+        figure(), image, "21%", FakeClient(trailing), VisionExtra()
     )
     assert reading.error == ""
     assert reading.takeaways == ["a"]
@@ -153,7 +153,7 @@ def test_retry_after_unparseable_reply(tmp_path):
             return "not json at all" if self.calls == 1 else GOOD_JSON
 
     client = RetryClient()
-    reading = interpret_figure(figure(), image, "21%", client, VisionSettings())
+    reading = interpret_figure(figure(), image, "21%", client, VisionExtra())
     assert client.calls == 2
     assert reading.error == ""
     assert reading.summary

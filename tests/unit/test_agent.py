@@ -216,7 +216,7 @@ def test_build_tools_exposes_the_catalog():
 
 def test_list_papers_tool_reads_raw_dir(tmp_path):
     settings = Settings()
-    settings.data.raw_dir = str(tmp_path)
+    settings.paths.raw_dir = str(tmp_path)
     tools = build_tools(settings)
     result = call_tool(tools["list_papers"], {})
     assert result["ok"] is True
@@ -225,7 +225,7 @@ def test_list_papers_tool_reads_raw_dir(tmp_path):
 
 def test_read_note_reports_missing(tmp_path):
     settings = Settings()
-    settings.data.processed_dir = str(tmp_path)
+    settings.paths.staging_dir = str(tmp_path)
     tools = build_tools(settings)
     result = call_tool(tools["read_note"], {"sha": "deadbeef"})
     assert result["ok"] is False
@@ -234,7 +234,7 @@ def test_read_note_reports_missing(tmp_path):
 
 def test_write_report_writes_file(tmp_path):
     settings = Settings()
-    settings.data.processed_dir = str(tmp_path)
+    settings.paths.staging_dir = str(tmp_path)
     tools = build_tools(settings)
     result = call_tool(tools["write_report"], {"name": "summary", "body": "# hi"})
     assert result["ok"] is True

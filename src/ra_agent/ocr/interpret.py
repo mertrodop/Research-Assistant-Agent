@@ -5,7 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ..config import VisionSettings
+from ..config import VisionExtra
 from ..llm.client import LlmClient, VisionError
 from ..schema import FigureInterpretation, FigureRef
 
@@ -109,7 +109,7 @@ def interpret_figure(
     image_path: str | Path,
     page_text: str,
     client: LlmClient,
-    settings: VisionSettings,
+    settings: VisionExtra,
 ) -> FigureInterpretation:
     prompt = PROMPT.format(
         caption=figure.caption or "(none)",
@@ -165,7 +165,7 @@ def interpret_figures(
     image_dir: str | Path,
     page_texts: dict[int, str],
     client: LlmClient,
-    settings: VisionSettings,
+    settings: VisionExtra,
     sha: str = "",
 ) -> list[FigureRef]:
     """Interpret every figure in parallel, with a per-figure disk cache."""

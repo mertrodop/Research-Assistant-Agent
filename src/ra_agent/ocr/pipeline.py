@@ -210,7 +210,7 @@ class OcrPipeline:
         figures: dict[int, list[FigureRef]] = {}
         if figures_dir is not None and self.settings.figures.enabled:
             figures = self._extract_figures(pdf_path, ordered, Path(figures_dir))
-            if self.vision is not None and self.settings.vision.enabled:
+            if self.vision is not None and self.settings.figures.describe:
                 figures = self._interpret_figures(
                     figures, Path(figures_dir), ordered, sha
                 )
@@ -218,7 +218,7 @@ class OcrPipeline:
                 page.model_copy(update={"figures": figures.get(page.page_no, [])})
                 for page in ordered
             ]
-            if self.settings.vision.enabled:
+            if self.settings.figures.describe:
                 checked: list[PageResult] = []
                 for page in ordered:
                     result = check_figure_grounding(page.figures)
@@ -296,7 +296,7 @@ class OcrPipeline:
             image_dir,
             texts,
             self.vision,
-            self.settings.vision,
+            self.settings.vision_extra,
             sha=sha,
         )
         grouped: dict[int, list[FigureRef]] = {}

@@ -8,7 +8,7 @@ from typing import Protocol
 
 import httpx
 
-from ..config import VisionSettings
+from ..config import ModelSettings
 
 
 class VisionError(RuntimeError):
@@ -47,7 +47,7 @@ class OpenAICompatibleVisionClient:
     model and the API key environment variable change.
     """
 
-    def __init__(self, settings: VisionSettings, api_key: str | None = None) -> None:
+    def __init__(self, settings: ModelSettings, api_key: str | None = None) -> None:
         self.settings = settings
         self.model = settings.model
         self._api_key = api_key if api_key is not None else os.environ.get(
@@ -105,7 +105,8 @@ class OpenAICompatibleVisionClient:
         return self._post(prompt)
 
 
-def build_vision_client(settings: VisionSettings) -> LlmClient:
-    if not settings.enabled:
+def build_llm(settings: ModelSettings) -> OpenAICompatibleVisionClient | NullVisionClient:
+    """Real client when the API key is set, otherwise the null client."""
+    if not os.environ.get(settings.api_key_env):
         return NullVisionClient()
     return OpenAICompatibleVisionClient(settings)

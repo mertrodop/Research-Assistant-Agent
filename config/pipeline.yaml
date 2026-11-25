@@ -27,11 +27,12 @@ pipeline:
   concurrency: 2
   max_attempts: 3
   cache_dir: .cache/ocr
-  vault_dir: vault
 
-data:
+paths:
   raw_dir: data/raw
-  processed_dir: data/processed
+  vault_dir: vault
+  staging_dir: staging
+  memory_dir: memory
 
 figures:
   enabled: true
@@ -40,15 +41,20 @@ figures:
   max_caption_gap: 140
   page_render_fallback: true
   render_dpi: 150
+  describe: true
 
-vision:
-  enabled: false
-  model: google/gemini-2.5-flash
-  base_url: https://openrouter.ai/api/v1
-  api_key_env: OPEN_ROUTER_API_KEY
-  timeout_s: 90
-  max_tokens: 2000   # reasoning models spend part of it before answering
-  temperature: 0.0
+models:
+  agent:
+    base_url: https://openrouter.ai/api/v1
+    model: qwen/qwen3-vl-8b-instruct
+    api_key_env: OPEN_ROUTER_API_KEY
+  vision:
+    base_url: https://openrouter.ai/api/v1
+    model: qwen/qwen3-vl-8b-instruct
+    api_key_env: OPEN_ROUTER_API_KEY
+    max_tokens: 2000   # reasoning models spend part of it before answering
+
+vision_extra:
   concurrency: 2
   cache_dir: .cache/figures
   max_image_side: 1400
@@ -79,7 +85,8 @@ meta:              # document evaluator-optimizer, runs with crossref
   max_unresolved_refs: 0.3
 
 agent:
-  enabled: false
-  max_steps: 8
+  max_steps: 12
   max_consecutive_errors: 2
-  trace_dir: data/processed/traces
+  max_invalid_calls: 2
+  context_budget: 6000
+  keep_last_turns: 4

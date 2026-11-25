@@ -80,7 +80,7 @@ def build_tools(settings: Settings, pipeline: OcrPipeline | None = None) -> dict
     engine = pipeline or OcrPipeline(settings=settings)
 
     def list_papers(_: ListPapersArgs) -> dict:
-        root = Path(settings.data.raw_dir)
+        root = Path(settings.paths.raw_dir)
         if not root.is_dir():
             return {"papers": [], "note": f"{root} does not exist"}
         papers = []
@@ -142,7 +142,7 @@ def build_tools(settings: Settings, pipeline: OcrPipeline | None = None) -> dict
         }
 
     def read_note(args: ReadNoteArgs) -> dict:
-        root = Path(settings.data.processed_dir)
+        root = Path(settings.paths.staging_dir)
         matches = sorted(root.glob(f"{args.sha}*.md"))
         if not matches:
             raise ToolError(f"no processed note for sha prefix {args.sha}")
@@ -157,7 +157,7 @@ def build_tools(settings: Settings, pipeline: OcrPipeline | None = None) -> dict
         safe = "".join(char for char in args.name if char.isalnum() or char in "-_ ").strip()
         if not safe:
             raise ToolError("report name has no usable characters")
-        target = Path(settings.data.processed_dir) / "reports" / f"{safe}.md"
+        target = Path(settings.paths.staging_dir) / "reports" / f"{safe}.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(args.body, encoding="utf-8")
         return {"path": str(target), "chars": len(args.body)}

@@ -9,3 +9,6 @@ build/
 dist/
 eval/results/
 .superpowers/
+staging/
+memory/
+data/eval/
