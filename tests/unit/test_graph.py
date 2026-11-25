@@ -74,9 +74,14 @@ def test_invalid_calls(ws):
     assert out["invalid"] == 2 and model.calls == 2
 
 
-def test_path_guard(ws, tmp_path):
+def test_path_guard(ws, tmp_path, monkeypatch):
+    # "../../.env" from cwd a/b is the real sentinel tmp_path/.env
+    cwd = tmp_path / "a" / "b"
+    cwd.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
     secret = tmp_path / ".env"
     secret.write_text("KEY=1")
+    assert Path("../../.env").resolve() == secret.resolve()
     before = secret.stat().st_mtime_ns
     out, _, _, _ = run(ws, [call("ingest_paper", pdf="../../.env"), AIMessage(content="ok")])
     assert out["invalid"] == 1 and out["tried"] == []
@@ -149,7 +154,8 @@ def test_eviction(ws):
     big = StructuredTool.from_function(lambda n: {"ok": True, "summary": "x" * 400, "n": "y" * 2000},
                                        name="big", description="big")
     script = [call("big", 0, n=1), call("big", 1, n=2), call("big", 2, n=3), AIMessage(content="done")]
-    out, _, _, _ = run(ws, script, tools=local_tools(ws) + [big])
+    # "big" is outside TOOL_KINDS, so each call waits for approval (fail closed)
+    out, _, _, _ = run(ws, script, tools=local_tools(ws) + [big], resume=["approve"] * 3)
     assert out["evicted"] and episodes(ws)[-1]["evicted"]
     assert any(str(m.content).startswith("[evicted] ") for m in out["messages"])
 
@@ -170,3 +176,26 @@ def test_llm_error_goes_to_fallback(ws):
     graph = build_graph(Broken(responses=[]), local_tools(ws), ws.settings, ws.fallback_ingest)
     out = asyncio.run(graph.ainvoke({"task": "t", "paper": "paper.pdf"}))
     assert out["outcome"] == "fallback" and "llm_error" in out["failure"]
+
+
+def test_tool_outside_tool_kinds_needs_approval(ws):
+    ran = []
+    extra = StructuredTool.from_function(lambda x: ran.append(x) or {"ok": True, "summary": "ran"},
+                                         name="delete_all", description="unknown kind")
+    out, _, _, _ = run(ws, [call("delete_all", x="1"), AIMessage(content="ok")],
+                       tools=local_tools(ws) + [extra])
+    (pending,) = out["__interrupt__"]
+    assert pending.value["tool"] == "delete_all" and ran == []
+
+
+def test_failing_stage_still_interrupts_with_reason(ws):
+    out, _, _, _ = run(ws, [call("commit_note", paper="never-ingested"), AIMessage(content="ok")],
+                       paper="never-ingested")
+    (pending,) = out["__interrupt__"]
+    assert pending.value["diff"].startswith("diff unavailable:") and "never-ingested" in pending.value["diff"]
+
+    tools = [t for t in local_tools(ws) if t.name != "stage_note"]  # missing tool: no KeyError
+    out, _, _, _ = run(ws, [call("commit_note", paper="x"), AIMessage(content="ok")], tools=tools, thread="m")
+    (pending,) = out["__interrupt__"]
+    assert pending.value["diff"].startswith("diff unavailable: KeyError")
+    assert vault_files(ws) == []

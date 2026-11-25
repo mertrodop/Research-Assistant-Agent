@@ -160,6 +160,16 @@ def build_graph(
         last = state["messages"][-1]
         return "guard" if isinstance(last, AIMessage) and last.tool_calls else "report"
 
+    async def preview(name: str, args: dict) -> str:
+        """What the human approves; never raises."""
+        if name != "commit_note":
+            return str(args.get("text") or json.dumps(args, ensure_ascii=False, default=str))
+        try:
+            staged = _parse(_text(await by_name["stage_note"].ainvoke({"paper": args["paper"]})))
+        except Exception as exc:  # noqa: BLE001 - the human still decides, with the reason shown
+            return f"diff unavailable: {type(exc).__name__}: {exc}"[:400]
+        return staged.get("diff") or f"diff unavailable: {staged.get('error') or 'stage_note returned no diff'}"
+
     async def guard(state: AgentState, config: RunnableConfig) -> Command:
         # LangGraph re-runs this node on resume: everything before interrupt() is idempotent
         call, *extra = state["messages"][-1].tool_calls
@@ -173,12 +183,9 @@ def build_graph(
             messages.append(ToolMessage(f"invalid call: {reason}", tool_call_id=call["id"], status="error"))
             return Command(goto="agent", update={"messages": messages, "invalid": state["invalid"] + 1})
         signatures = state["signatures"] + [signature(name, args)]
-        if TOOL_KINDS.get(name) == "write":
-            if name == "commit_note":
-                staged = await by_name["stage_note"].ainvoke({"paper": args["paper"]})
-                diff = _parse(_text(staged)).get("diff", "")
-            else:
-                diff = str(args.get("text", ""))
+        # fail closed: a tool that is not known to be read or compute needs approval
+        if TOOL_KINDS.get(name) not in {"read", "compute"}:
+            diff = await preview(name, args)
             if _interrupt({"tool": name, "args": args, "diff": diff}, config) != "approve":
                 messages.append(ToolMessage("rejected by human", tool_call_id=call["id"]))
                 return Command(goto="agent", update={"messages": messages, "signatures": signatures})
