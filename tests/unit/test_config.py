@@ -20,3 +20,14 @@ def test_yaml_with_one_role_keeps_the_other(tmp_path):
     s = Settings.load(path)
     assert s.models["agent"].model == "local-model"
     assert s.models["vision"].model == "qwen/qwen3-vl-8b-instruct"
+
+
+def test_local_endpoint_without_key_gets_placeholder(monkeypatch):
+    from ra_agent.config import ModelSettings
+    from ra_agent.llm.client import OpenAICompatibleVisionClient, resolve_api_key
+
+    monkeypatch.delenv("OPEN_ROUTER_API_KEY", raising=False)
+    local = ModelSettings(base_url="http://localhost:11434/v1")
+    assert resolve_api_key(local) == "not-needed"
+    assert isinstance(build_llm(local), OpenAICompatibleVisionClient)
+    assert resolve_api_key(ModelSettings()) == ""

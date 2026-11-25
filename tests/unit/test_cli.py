@@ -55,3 +55,16 @@ def test_edit_then_approve(tmp_path, capsys, monkeypatch):
     answers = iter(["e", "a"])
     assert decide(PAYLOAD, vault, input_fn=lambda _: next(answers)) == "approve"
     assert "edited" in note.read_text() and "edited" in capsys.readouterr().out
+
+
+def test_agent_check_accepts_keyless_local_endpoint(tmp_path, monkeypatch, capsys):
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("models:\n  agent:\n    base_url: http://localhost:11434/v1\n    api_key_env: NO_SUCH_KEY\n")
+    monkeypatch.delenv("NO_SUCH_KEY", raising=False)
+    monkeypatch.setattr("ra_agent.cli.run_agent", lambda *a: _done())
+    assert main(["agent", "hi", "--config", str(cfg)]) == 0
+    assert "Set NO_SUCH_KEY" not in capsys.readouterr().out
+
+
+async def _done():
+    return {"messages": [type("M", (), {"content": "ok", "name": ""})()], "outcome": "finish"}

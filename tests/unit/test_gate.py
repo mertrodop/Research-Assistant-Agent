@@ -191,3 +191,11 @@ def test_duplicated_table_blocks_naming_table_2():
     t = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n"
     c = check_table_cells(t + "\ntext\n\n" + t)
     assert not c.passed and "table 2" in c.detail
+
+
+def test_doctags_not_applicable_off_granite():
+    from ra_agent.schema import Route
+
+    checks = run_gate(GOOD, GateSettings(), doctags="</page_header>", route=Route.DOCLING)
+    check = next(c for c in checks if c.name == "doctags_balance")
+    assert check.passed and check.detail == "not applicable"

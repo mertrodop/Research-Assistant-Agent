@@ -25,6 +25,7 @@ from rapidfuzz import fuzz
 from ..config import MetaSettings
 from ..schema import CheckResult, OcrDocument, PaperMeta, Severity
 from .crossref import CrossrefClient
+from .engine import NativeTextEngine
 
 _ARXIV_ID = re.compile(r"(?:arxiv[:\s/]*)?(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.I)
@@ -53,13 +54,24 @@ def _guess_authors(page_one: str, title: str) -> list[str]:
     return names[:40]
 
 
+def _text_layer_head(document: OcrDocument) -> str:
+    try:
+        return NativeTextEngine().ocr_page(Path(document.source_pdf), 1)[0][:4000]
+    except Exception:  # missing or unreadable PDF: no extra evidence, not an error
+        return ""
+
+
 def draft_meta(document: OcrDocument) -> PaperMeta:
     """Generator: read the paper identity from page 1, no network."""
     page_one = document.pages[0].markdown if document.pages else ""
     head = page_one[:4000]
-    # arXiv stamp on page 1, else the file name (data/raw names PDFs by arXiv id)
-    arxiv = re.search(r"arxiv[:\s/]*(\d{4}\.\d{4,5})", head, re.I) or _ARXIV_ID.fullmatch(
-        Path(document.source_pdf).stem
+    # arXiv stamp on page 1 (Docling drops the margin stamp, the text layer keeps it),
+    # else the file name
+    stamp = r"arxiv[:\s/]*(\d{4}\.\d{4,5})"
+    arxiv = (
+        re.search(stamp, head, re.I)
+        or re.search(stamp, _text_layer_head(document), re.I)
+        or _ARXIV_ID.fullmatch(Path(document.source_pdf).stem)
     )
     doi = _DOI.search(head)
     year = _YEAR.search(head)
@@ -174,6 +186,11 @@ def lookup(meta: PaperMeta, crossref: CrossrefClient) -> dict | None:
         best = max(hits, key=lambda i: crossref.score_title(meta.title, (i.get("title") or [""])[0]), default=None)
         if best and crossref.score_title(meta.title, (best.get("title") or [""])[0]) >= crossref.min_score:
             record = _from_crossref(best)
+    if record is None and len(meta.title) >= 12:
+        hits = crossref.search_arxiv(meta.title)
+        best = max(hits, key=lambda h: crossref.score_title(meta.title, h["title"]), default=None)
+        if best and crossref.score_title(meta.title, best["title"]) >= crossref.min_score:
+            record = best
     return record
 
 

@@ -5,7 +5,7 @@ import string
 from collections import Counter
 
 from ..config import GateSettings
-from ..schema import CheckResult, Severity
+from ..schema import CheckResult, Route, Severity
 
 _PRINTABLE = set(string.printable)
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
@@ -392,7 +392,12 @@ def run_gate(
     text_layer: str = "",
     doctags: str | None = None,
     ink_ratio: float = 1.0,
+    route: Route | None = None,
 ) -> list[CheckResult]:
+    if route is not None and route is not Route.GRANITE:  # DocTags are a Granite format
+        doctags_check = _check("doctags_balance", True, Severity.INFO, detail="not applicable")
+    else:
+        doctags_check = check_doctags(doctags)
     return [
         check_non_empty(markdown, settings, ink_ratio),
         check_printable(markdown, settings),
@@ -404,7 +409,7 @@ def run_gate(
         check_table_cells(markdown),
         check_heading_presence(markdown, text_layer),
         check_equations(markdown),
-        check_doctags(doctags),
+        doctags_check,
         check_numbers(markdown, text_layer),
         check_references(markdown),
     ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from pathlib import Path
 from typing import Protocol
 
@@ -105,8 +106,15 @@ class OpenAICompatibleVisionClient:
         return self._post(prompt)
 
 
+def resolve_api_key(settings: ModelSettings) -> str:
+    """The key from the environment; a local endpoint (not OpenRouter/OpenAI) needs none."""
+    key = os.environ.get(settings.api_key_env, "")
+    if not key and not re.search(r"openrouter\.ai|api\.openai\.com", settings.base_url):
+        return "not-needed"
+    return key
+
+
 def build_llm(settings: ModelSettings) -> OpenAICompatibleVisionClient | NullVisionClient:
-    """Real client when the API key is set, otherwise the null client."""
-    if not os.environ.get(settings.api_key_env):
-        return NullVisionClient()
-    return OpenAICompatibleVisionClient(settings)
+    """Real client when a key is available (or not needed), otherwise the null client."""
+    key = resolve_api_key(settings)
+    return OpenAICompatibleVisionClient(settings, key) if key else NullVisionClient()

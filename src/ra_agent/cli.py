@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 from .config import Settings, load_env_file
+from .llm.client import resolve_api_key
 from .ocr.render import page_count
 from .schema import NoteFrontmatter
 from .tools import TOOL_KINDS
@@ -96,7 +97,7 @@ def agent_command(args: argparse.Namespace, task: str, paper: str) -> int:
     settings.agent.max_steps = args.max_steps or settings.agent.max_steps
     load_env_file()
     key_env = settings.models["agent"].api_key_env
-    if not os.environ.get(key_env):
+    if not resolve_api_key(settings.models["agent"]):
         print(f"Set {key_env} (in the environment or .env) or point models.agent at a local endpoint.")
         return 2
     out = asyncio.run(run_agent(task, paper, settings, args.config, args.yes_to_reads))

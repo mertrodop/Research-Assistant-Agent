@@ -73,3 +73,34 @@ def test_review_pages_and_bad_citations_are_reported(monkeypatch):
     by_name = {c.name: c for c in checks}
     assert not by_name["ocr_pages"].passed
     assert not by_name["citations"].passed and "2/3" in by_name["citations"].detail
+
+
+def test_draft_reads_arxiv_id_from_text_layer(tmp_path):
+    import fitz
+
+    pdf = tmp_path / "paperbench-slug.pdf"
+    pdf_doc = fitz.open()
+    pdf_doc.new_page().insert_text((20, 60), "arXiv:2504.01848v1 [cs.AI] 2 Apr 2025")
+    pdf_doc.save(pdf)
+    doc = document("PaperBench: Evaluating AI's Ability to Replicate AI Research")
+    doc.pages[0].markdown = "PaperBench\nNo stamp here"
+    doc.source_pdf = str(pdf)
+    assert synth.draft_meta(doc).arxiv_id == "2504.01848"
+
+
+def test_lookup_falls_back_to_arxiv_title_search():
+    class Fake:
+        cache_dir, timeout_s, min_score = "c", 1.0, 0.82
+
+        def search(self, title):
+            return []
+
+        def search_arxiv(self, title):
+            return [{**RECORD, "title": "Unrelated"}, RECORD]
+
+        def score_title(self, a, b):
+            return 1.0 if a == b else 0.0
+
+    meta = synth.PaperMeta(title=RECORD["title"])
+    assert synth.lookup(meta, Fake()) == RECORD
+    assert synth.lookup(synth.PaperMeta(title="A title nobody published"), Fake()) is None

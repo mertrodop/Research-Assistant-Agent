@@ -213,3 +213,12 @@ def test_long_source_path_with_spaces_survives_rename(vault, tmp_path):
     note = vault.commit(staged.slug).read_text(encoding="utf-8")
     assert yaml.safe_load(note.split("---")[1])["source_pdf"] == str(folder / f"{staged.slug}.pdf")
     assert note.split("---", 2)[2].startswith("\n# ")
+
+
+def test_note_drops_heading_that_repeats_the_title():
+    document = doc()
+    document.markdown = "## PaperBench: Evaluating AI's Ability to Replicate AI Research\n\nBody."
+    text = render_note(document, "s")
+    assert "## PaperBench" not in text and "\n# PaperBench" in text and "Body." in text
+    document.markdown = "## Abstract\n\nBody."
+    assert "## Abstract" in render_note(document, "s")

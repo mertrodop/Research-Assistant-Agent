@@ -125,6 +125,7 @@ class OcrPipeline:
             text_layer=text_layer,
             doctags=doctags,
             ink_ratio=stats.ink_ratio,
+            route=route,
         )
         if error:
             checks.insert(

@@ -7,7 +7,6 @@ fallback -> report -> END
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Callable, TypedDict
@@ -27,6 +26,7 @@ from langgraph.graph.message import add_messages
 from langgraph.types import Command, interrupt
 
 from ..config import ModelSettings, Settings
+from ..llm.client import resolve_api_key
 from ..tools import TOOL_KINDS
 from .context import fit_context
 from .guard import FailureReport, signature, validate_call
@@ -63,7 +63,7 @@ def build_chat_model(model: ModelSettings):
     return ChatOpenAI(
         model=model.model,
         base_url=model.base_url,
-        api_key=os.environ.get(model.api_key_env),
+        api_key=resolve_api_key(model) or None,
         temperature=0,
         max_tokens=model.max_tokens,
         timeout=model.timeout_s,

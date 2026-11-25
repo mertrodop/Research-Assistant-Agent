@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+
 import yaml
+from rapidfuzz import fuzz
 
 from ..schema import NoteFrontmatter, OcrDocument, Route
 
@@ -101,10 +104,26 @@ def _doc_checks(document: OcrDocument) -> str:
     return "\n".join(lines)
 
 
+def _drop_title_heading(markdown: str, title: str) -> str:
+    """The note starts with `# title`; drop the engine's first heading if it repeats it."""
+    def flat(text: str) -> str:
+        return " ".join(re.findall(r"\w+", text.lower()))
+
+    lines = markdown.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("#"):
+            if fuzz.ratio(flat(line), flat(title)) >= 90:
+                return "\n".join(lines[:i] + lines[i + 1 :]).lstrip("\n")
+            break
+    return markdown
+
+
 def render_note(document: OcrDocument, slug: str) -> str:
     # The pipeline writes figure links as figures/fig-N.png; the vault keeps them
     # beside the note in <slug>/.
-    body = document.markdown.replace("](figures/", f"]({slug}/")
+    body = _drop_title_heading(document.markdown, document.title).replace(
+        "](figures/", f"]({slug}/"
+    )
     parts = [
         _frontmatter(document, slug),
         f"# {document.title}",
