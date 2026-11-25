@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from ..schema import OcrDocument
-from .note import render_note
+from .note import dump_frontmatter, render_note
 
 log = logging.getLogger(__name__)
 MAX_SLUG = 100
@@ -121,8 +121,8 @@ class Vault:
                 log.warning("%s already exists; left %s unrenamed", renamed, source_pdf)
             else:
                 source_pdf.rename(renamed)
-                line = yaml.safe_dump({"source_pdf": str(renamed)}, allow_unicode=True).strip()
-                text = re.sub(r"(?m)^source_pdf: .*$", lambda _: line, text, count=1)
+                rest = text.split("---", 2)[2]
+                text = dump_frontmatter({**front, "source_pdf": str(renamed)}) + rest.lstrip("\n")
         target = self._papers(self.root) / f"{slug}.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         figures = self._papers(self.staging) / slug

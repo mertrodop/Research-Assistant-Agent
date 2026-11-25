@@ -200,3 +200,16 @@ def test_bad_slugs_rejected(vault, bad):
     for call in (vault.read, vault.diff, vault.commit):
         with pytest.raises(ValueError):
             call(bad)
+
+
+def test_long_source_path_with_spaces_survives_rename(vault, tmp_path):
+    folder = tmp_path / ("a long folder name with spaces " * 3)
+    folder.mkdir()
+    pdf = folder / "my raw paper name.pdf"
+    pdf.write_bytes(b"%PDF")
+    assert len(str(pdf)) > 80
+    staged = vault.stage(doc(source_pdf=str(pdf)))
+    assert yaml.safe_load(staged.note_path.read_text(encoding="utf-8").split("---")[1])["source_pdf"] == str(pdf)
+    note = vault.commit(staged.slug).read_text(encoding="utf-8")
+    assert yaml.safe_load(note.split("---")[1])["source_pdf"] == str(folder / f"{staged.slug}.pdf")
+    assert note.split("---", 2)[2].startswith("\n# ")

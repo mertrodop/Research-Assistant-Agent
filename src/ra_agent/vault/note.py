@@ -5,6 +5,14 @@ import yaml
 from ..schema import NoteFrontmatter, OcrDocument, Route
 
 
+def dump_frontmatter(data: dict) -> str:
+    """No line folding: a folded long value would break line-level edits."""
+    body = yaml.safe_dump(
+        data, sort_keys=False, allow_unicode=True, width=float("inf")
+    ).strip()
+    return f"---\n{body}\n---\n"
+
+
 def _frontmatter(document: OcrDocument, slug: str) -> str:
     verified = sum(1 for page in document.pages if page.status == "verified")
     figures = [figure for page in document.pages for figure in page.figures]
@@ -39,10 +47,7 @@ def _frontmatter(document: OcrDocument, slug: str) -> str:
             else {}
         ),
     )
-    body = yaml.safe_dump(
-        meta.model_dump(), sort_keys=False, allow_unicode=True
-    ).strip()
-    return f"---\n{body}\n---\n"
+    return dump_frontmatter(meta.model_dump())
 
 
 def _validation(document: OcrDocument) -> str:
