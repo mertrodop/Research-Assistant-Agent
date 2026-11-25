@@ -3,7 +3,7 @@ from __future__ import annotations
 from ra_agent.config import Settings
 from ra_agent.ocr.engine import NativeTextEngine
 from ra_agent.schema import Route
-from ra_agent.ocr.pipeline import OcrPipeline, PageCache, parse_pages
+from ra_agent.ocr.pipeline import OcrPipeline, PageCache
 
 
 class BrokenEngine:
@@ -64,11 +64,6 @@ def test_native_pipeline_verifies_text_pdf(pdf, tmp_path):
 def test_page_subset(pdf, tmp_path):
     document = OcrPipeline(settings=settings(tmp_path), engines=fakes(NativeTextEngine())).run(pdf, pages=[2])
     assert [page.page_no for page in document.pages] == [2]
-
-
-def test_parse_pages():
-    assert parse_pages("1-3,7") == [1, 2, 3, 7]
-    assert parse_pages(None) is None
 
 
 def test_circuit_breaker_marks_needs_review(blank_pdf, tmp_path):

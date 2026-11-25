@@ -364,19 +364,3 @@ class OcrPipeline:
             if line.startswith("# "):
                 return line[2:].strip()
         return pdf_path.stem
-
-
-def parse_pages(spec: str | None) -> list[int] | None:
-    if not spec:
-        return None
-    pages: list[int] = []
-    for chunk in spec.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if "-" in chunk:
-            start, end = chunk.split("-", 1)
-            pages.extend(range(int(start), int(end) + 1))
-        else:
-            pages.append(int(chunk))
-    return sorted(set(pages))

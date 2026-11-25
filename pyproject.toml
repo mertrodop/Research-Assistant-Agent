@@ -1,7 +1,7 @@
 [project]
 name = "ra-agent"
 version = "0.1.0"
-description = "Research Assistant Agent - OCR pipeline"
+description = "Research assistant agent: PDFs to checked, human-approved vault notes"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.6",

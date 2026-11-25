@@ -9,14 +9,13 @@ from .engine import (
     build_engines,
 )
 from .gate import has_blockers, run_gate
-from .pipeline import OcrPipeline, PageCache, parse_pages
+from .pipeline import OcrPipeline, PageCache
 from .render import page_count, page_stats, pdf_sha256, render_page
 from .router import choose_route, dpi_for
 
 __all__ = [
     "OcrPipeline",
     "PageCache",
-    "parse_pages",
     "assemble",
     "section_tree",
     "run_gate",

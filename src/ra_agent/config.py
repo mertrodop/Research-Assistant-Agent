@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RenderSettings(BaseModel):
@@ -138,6 +138,12 @@ class Settings(BaseModel):
     references: ReferenceSettings = Field(default_factory=ReferenceSettings)
     meta: MetaSettings = Field(default_factory=MetaSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+
+    @field_validator("models")
+    @classmethod
+    def _fill_roles(cls, models: dict[str, ModelSettings]) -> dict[str, ModelSettings]:
+        """A YAML that sets one role keeps the code defaults for the others."""
+        return {"agent": ModelSettings(), "vision": ModelSettings()} | models
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Settings":

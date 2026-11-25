@@ -132,6 +132,15 @@ def test_approval_interrupt_reject_and_approve(ws, slug):
     assert (Path(ws.settings.paths.vault_dir) / "Papers" / f"{slug}.md").is_file()
 
 
+def test_edit_during_interrupt_survives_resume(ws, slug):
+    script = [call("commit_note", paper=slug), AIMessage(content="done")]
+    _, _, graph, config = run(ws, script, paper=slug)
+    staged = ws.vault._papers(ws.vault.staging) / f"{slug}.md"
+    staged.write_text(staged.read_text() + "\nhuman edit\n")
+    asyncio.run(graph.ainvoke(Command(resume="approve"), config))
+    assert "human edit" in (Path(ws.settings.paths.vault_dir) / "Papers" / f"{slug}.md").read_text()
+
+
 def test_reject_then_same_write_is_repeated_action(ws, slug):
     out, model, _, _ = run(ws, [call("commit_note", paper=slug)], paper=slug, resume=["reject"])
     assert "__interrupt__" not in out

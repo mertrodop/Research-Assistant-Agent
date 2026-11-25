@@ -1,179 +1,154 @@
+"""`ra`: run the agent with human approval, ingest a paper, list papers, serve MCP."""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
+import shlex
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 from .config import Settings, load_env_file
-from .llm.client import build_llm
-from .ocr.pipeline import OcrPipeline, parse_pages
-from .ocr.render import pdf_sha256
+from .ocr.render import page_count
+from .schema import NoteFrontmatter
+from .tools import TOOL_KINDS
 from .vault import Vault
+from .vault.store import _front
+
+DECISIONS = {"a": "approve", "e": "edit", "r": "reject"}
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ra", description="Research Assistant OCR pipeline")
+def parse_decision(text: str) -> str | None:
+    return DECISIONS.get(text.strip().lower())
+
+
+def edit_and_validate(path: Path, editor_cmd: str) -> str:
+    """Open the note in the editor; return the frontmatter error, or "" when it is valid."""
+    subprocess.run([*shlex.split(editor_cmd), str(path)], check=False)
+    try:
+        NoteFrontmatter.model_validate(_front(path.read_text(encoding="utf-8")))
+    except Exception as exc:  # noqa: BLE001 - a broken edit must come back as text, not a crash
+        return str(exc)
+    return ""
+
+
+def decide(payload: dict, vault: Vault, yes_to_reads: bool = False, input_fn=input) -> str:
+    """Show a pending write and return "approve" or "reject"."""
+    tool, args = payload["tool"], payload["args"]
+    if yes_to_reads and TOOL_KINDS.get(tool) == "read":
+        return "approve"
+    print(f"\nThe agent wants to run {tool} with {json.dumps(args, ensure_ascii=False)}\n")
+    print(payload["diff"])
+    note = vault._papers(vault.staging) / f"{args.get('paper', '')}.md"
+    while True:
+        choice = parse_decision(input_fn("[a]pprove, [e]dit, [r]eject? "))
+        if choice == "edit" and tool == "commit_note" and note.is_file():
+            while error := edit_and_validate(note, os.environ.get("EDITOR", "nano")):
+                print(f"frontmatter is not valid, opening the editor again:\n{error}")
+            print(vault.diff(args["paper"]))
+        elif choice in {"approve", "reject"}:
+            return choice
+
+
+def note_path(messages) -> str:
+    """Where the last commit_note (path) or stage_note (handle) put the note."""
+    asked = {c["id"]: c["name"] for m in messages for c in getattr(m, "tool_calls", [])}
+    found = ""
+    for m in messages:
+        key = {"commit_note": "path", "stage_note": "handle"}.get(asked.get(getattr(m, "tool_call_id", "")))
+        if key:
+            try:
+                found = json.loads(m.content).get(key) or found
+            except (ValueError, AttributeError):
+                pass
+    return found
+
+
+async def run_agent(task: str, paper: str, settings: Settings, config: str | None, yes_to_reads: bool) -> dict:
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    from .agent.graph import build_chat_model, build_graph
+    from .tools import Workspace
+
+    args = ["-m", "ra_agent.mcp_server"] + (["--config", config] if config else [])
+    server = {"command": sys.executable, "args": args, "transport": "stdio", "env": dict(os.environ)}
+    tools = await MultiServerMCPClient({"ra": server}).get_tools()
+    graph = build_graph(
+        build_chat_model(settings.models["agent"]), tools, settings,
+        lambda name: Workspace(settings).fallback_ingest(name), InMemorySaver(),
+    )
+    vault = Vault(Path(settings.paths.vault_dir), Path(settings.paths.staging_dir))
+    run = {"configurable": {"thread_id": uuid.uuid4().hex}}  # state accumulates per thread
+    out = await graph.ainvoke({"task": task, "paper": paper}, run)
+    while "__interrupt__" in out:
+        answer = decide(out["__interrupt__"][0].value, vault, yes_to_reads)
+        out = await graph.ainvoke(Command(resume=answer), run)
+    return out
+
+
+def agent_command(args: argparse.Namespace, task: str, paper: str) -> int:
+    settings = Settings.load(args.config)
+    settings.agent.max_steps = args.max_steps or settings.agent.max_steps
+    load_env_file()
+    key_env = settings.models["agent"].api_key_env
+    if not os.environ.get(key_env):
+        print(f"Set {key_env} (in the environment or .env) or point models.agent at a local endpoint.")
+        return 2
+    out = asyncio.run(run_agent(task, paper, settings, args.config, args.yes_to_reads))
+    print(f"\n{out['messages'][-1].content}")
+    if path := note_path(out["messages"]):
+        print(f"Note: {path}")
+    return 0 if out["outcome"] == "finish" else 1
+
+
+def papers_command(args: argparse.Namespace) -> int:
+    raw = Path(Settings.load(args.config).paths.raw_dir)
+    for pdf in sorted(raw.glob("*.pdf")):
+        print(f"{pdf.stem}  ({page_count(pdf)} pages)")
+    return 0
+
+
+def _in_raw_dir(pdf: str, config: str | None) -> str:
+    """A bare file name lives in raw_dir."""
+    if pdf and len(Path(pdf).parts) == 1:
+        return str(Path(Settings.load(config).paths.raw_dir) / pdf)
+    return pdf
+
+
+def _parser() -> argparse.ArgumentParser:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--config", default=None, help="YAML settings, e.g. config/pipeline.yaml")
+    common.add_argument("--max-steps", type=int, default=None)
+    common.add_argument("--yes-to-reads", action="store_true", help="skip the prompt for read tools")
+    parser = argparse.ArgumentParser(prog="ra", description="Research assistant agent")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    ingest = sub.add_parser("ingest", help="OCR a PDF into a processed note")
-    ingest.add_argument("pdf", type=Path)
-    ingest.add_argument("--config", type=Path, default=None)
-    ingest.add_argument("--pages", default=None, help="e.g. 1-3,7")
-    ingest.add_argument(
-        "--device", choices=["auto", "cpu", "cuda", "mps", "xpu"], default=None
-    )
-    ingest.add_argument(
-        "--out", default=None, help="output dir (default: staging)"
-    )
-    ingest.add_argument("--no-write", action="store_true")
-    ingest.add_argument("--no-figures", action="store_true")
-    ingest.add_argument(
-        "--figures-llm", action="store_true", help="interpret figures with a vision model"
-    )
-    ingest.add_argument("--vision-model", default=None)
-    ingest.add_argument("--vision-base-url", default=None)
-    ingest.add_argument("--critic", action="store_true", help="Tier 2 rubric critic")
-    ingest.add_argument("--crossref", action="store_true", help="verify references")
-    ingest.add_argument(
-        "--refs-llm", action="store_true", help="let the LLM propose reference identities"
-    )
-    ingest.add_argument("--refs-attempts", type=int, default=None)
-    ingest.add_argument("--json", action="store_true", dest="as_json")
-
-    batch = sub.add_parser("batch", help="OCR every PDF under a directory")
-    batch.add_argument("dir", type=Path, nargs="?", default=None)
-    batch.add_argument("--config", type=Path, default=None)
-    batch.add_argument(
-        "--device", choices=["auto", "cpu", "cuda", "mps", "xpu"], default=None
-    )
-    batch.add_argument("--out", default=None)
-    batch.add_argument("--no-write", action="store_true")
-    batch.add_argument("--no-figures", action="store_true")
-    batch.add_argument("--figures-llm", action="store_true")
-    batch.add_argument("--vision-model", default=None)
-    batch.add_argument("--vision-base-url", default=None)
-    batch.add_argument("--critic", action="store_true")
-    batch.add_argument("--crossref", action="store_true")
-    batch.add_argument("--refs-llm", action="store_true")
-    batch.add_argument("--refs-attempts", type=int, default=None)
-
-    agent = sub.add_parser("agent", help="run the tool-calling agent on a task")
-    agent.add_argument("task", help="what the agent should do, in one sentence")
-    agent.add_argument("--config", type=Path, default=None)
-    agent.add_argument("--model", default=None)
-    agent.add_argument("--base-url", default=None)
-    agent.add_argument("--max-steps", type=int, default=None)
-    agent.add_argument("--json", action="store_true", dest="as_json")
+    agent = sub.add_parser("agent", parents=[common], help="run the agent on a task")
+    agent.add_argument("task")
+    agent.add_argument("--paper", default="", help="PDF the task is about")
+    sub.add_parser("ingest", parents=[common], help="ingest a PDF into the vault").add_argument("pdf")
+    sub.add_parser("papers", parents=[common], help="list the PDFs in raw_dir")
+    sub.add_parser("serve", parents=[common], help="run the MCP server on stdio")
     return parser
 
 
-def _summary(document) -> str:
-    lines = [
-        f"pdf      : {document.source_pdf}",
-        f"sha256   : {document.sha256[:12]}",
-        f"title    : {document.title}",
-        f"pages    : {len(document.pages)}",
-        f"status   : {document.status}",
-        "",
-        "page  route                 attempt  status        failed",
-    ]
-    for page in document.pages:
-        failed = ",".join(page.review_reasons) or "-"
-        lines.append(
-            f"{page.page_no:>4}  {page.route.value:<20}  {page.attempt:>7}  {page.status:<12}  {failed}"
-        )
-    return "\n".join(lines)
-
-
-def _stage(settings: Settings, out, document, figures_dir) -> Path:
-    vault = Vault(Path(settings.paths.vault_dir), Path(out))
-    return vault.stage(document, figures_dir).note_path
-
-
-def _ingest(args, settings: Settings) -> int:
-    pipeline = OcrPipeline(
-        settings=settings,
-        vision=build_llm(settings.models["vision"]),
-    )
-    out = args.out or settings.paths.staging_dir
-    figures_dir = None
-    if not args.no_figures:
-        figures_dir = Path(out) / "figures" / pdf_sha256(args.pdf)[:12]
-    document = pipeline.run(
-        args.pdf, pages=parse_pages(args.pages), figures_dir=figures_dir
-    )
-
-    note_path = None if args.no_write else _stage(settings, out, document, figures_dir)
-
-    if args.as_json:
-        payload = document.model_dump(mode="json")
-        payload["note_path"] = str(note_path) if note_path else None
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        print(_summary(document))
-        if note_path:
-            print(f"\nnote     : {note_path}")
-    return 0 if document.status == "verified" else 1
-
-
-def _batch(args, settings: Settings) -> int:
-    root = Path(args.dir or settings.paths.raw_dir)
-    pdfs = sorted(root.glob("*.pdf"))
-    if not pdfs:
-        print(f"no PDFs under {root}", file=sys.stderr)
-        return 2
-    out = args.out or settings.paths.staging_dir
-    pipeline = OcrPipeline(
-        settings=settings,
-        vision=build_llm(settings.models["vision"]),
-    )
-    failures = 0
-    for pdf in pdfs:
-        figures_dir = None
-        if not args.no_figures:
-            figures_dir = Path(out) / "figures" / pdf_sha256(pdf)[:12]
-        document = pipeline.run(pdf, figures_dir=figures_dir)
-        note_path = None if args.no_write else _stage(settings, out, document, figures_dir)
-        print(_summary(document))
-        if note_path:
-            print(f"note     : {note_path}\n")
-        failures += document.status != "verified"
-    print(f"{len(pdfs) - failures}/{len(pdfs)} verified")
-    return 0 if failures == 0 else 1
-
-
-def _agent(args, settings: Settings) -> int:
-    # the LangGraph agent (ra_agent.agent.build_graph) gets its CLI in the next task
-    print("ra agent: not wired to the LangGraph agent yet", file=sys.stderr)
-    return 2
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
-    load_env_file()
-    settings = Settings.load(args.config)
-    if getattr(args, "device", None):
-        settings.engine.device = args.device
-    if hasattr(args, "figures_llm"):
-        settings.figures.describe = args.figures_llm
-    if getattr(args, "vision_model", None):
-        settings.models["vision"].model = args.vision_model
-    if getattr(args, "vision_base_url", None):
-        settings.models["vision"].base_url = args.vision_base_url
-    if getattr(args, "critic", False):
-        settings.critic.enabled = True
-    if getattr(args, "crossref", False):
-        settings.crossref.enabled = True
-    if getattr(args, "refs_llm", False):
-        settings.references.use_llm = True
-    if getattr(args, "refs_attempts", None):
-        settings.references.max_attempts = args.refs_attempts
-    if args.command == "batch":
-        return _batch(args, settings)
-    if args.command == "agent":
-        return _agent(args, settings)
-    return _ingest(args, settings)
+    args = _parser().parse_args(argv)
+    if args.command == "papers":
+        return papers_command(args)
+    if args.command == "serve":
+        from .mcp_server import main as serve
+
+        serve(["--config", args.config] if args.config else [])
+        return 0
+    if args.command == "ingest":
+        pdf = _in_raw_dir(args.pdf, args.config)
+        return agent_command(args, f"Ingest {Path(pdf).name} into the vault", pdf)
+    return agent_command(args, args.task, _in_raw_dir(args.paper, args.config))
 
 
 if __name__ == "__main__":

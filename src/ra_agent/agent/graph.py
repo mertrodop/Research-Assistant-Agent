@@ -170,6 +170,8 @@ def build_graph(
             return f"diff unavailable: {type(exc).__name__}: {exc}"[:400]
         return staged.get("diff") or f"diff unavailable: {staged.get('error') or 'stage_note returned no diff'}"
 
+    previews: dict[str, str] = {}  # a resumed guard must not re-stage over the human's edit
+
     async def guard(state: AgentState, config: RunnableConfig) -> Command:
         # LangGraph re-runs this node on resume: everything before interrupt() is idempotent
         call, *extra = state["messages"][-1].tool_calls
@@ -185,7 +187,10 @@ def build_graph(
         signatures = state["signatures"] + [signature(name, args)]
         # fail closed: a tool that is not known to be read or compute needs approval
         if TOOL_KINDS.get(name) not in {"read", "compute"}:
-            diff = await preview(name, args)
+            key = signature(name, args)
+            if key not in previews:
+                previews[key] = await preview(name, args)
+            diff = previews[key]
             if _interrupt({"tool": name, "args": args, "diff": diff}, config) != "approve":
                 messages.append(ToolMessage("rejected by human", tool_call_id=call["id"]))
                 return Command(goto="agent", update={"messages": messages, "signatures": signatures})
