@@ -22,7 +22,9 @@ echo "OPEN_ROUTER_API_KEY=..." > .env      # never committed
 The default vision and agent model is Qwen3-VL-8B (`qwen/qwen3-vl-8b-instruct`) on
 OpenRouter. Any OpenAI-compatible endpoint works, a local one too (vLLM, Ollama, LM Studio):
 set `base_url`, `model` and `api_key_env` under `models.agent` and `models.vision` in
-`config/pipeline.yaml`. A role you leave out keeps its default.
+`config/pipeline.yaml`. It is read by default (found from the repo root, whatever the
+current directory); `--config FILE` picks another. A role you leave out keeps its default,
+and without the file the code defaults apply.
 
 ## Use
 
@@ -30,11 +32,11 @@ set `base_url`, `model` and `api_key_env` under `models.agent` and `models.visio
 ra papers                                   # PDFs in data/raw
 ra ingest paperbench-evaluating-ais-ability-to-replicate-ai-research.pdf
 ra agent "Which ingested papers mention agents?"
-ra agent "Re-check the references of this paper" --paper core-bench-fostering-....pdf
+ra agent "Re-check the references of this paper" --paper core-bench-fostering-the-credibility-of-published-research-through-a-computational-reproducibility.pdf
 ra serve                                    # the same tools as an MCP server on stdio
 ```
 
-Options for `ingest` and `agent`: `--config FILE`, `--max-steps N`, `--yes-to-reads`.
+Options for `ingest` and `agent`: `--config FILE`, `--max-steps N`.
 A bare PDF name is looked up in `data/raw`. Exit code: `0` when the agent finished,
 `1` when a limit stopped it and the deterministic fallback ran, `2` when no API key is set.
 The run ends with the answer (or the failure sentence) and the path of the note.
@@ -49,10 +51,11 @@ The tools are the methods of `Workspace` in `src/ra_agent/tools.py`, served over
 | compute | `ingest_paper`, `reprocess_page`, `describe_figure`, `check_references`, `critique_page`, `stage_note` | no |
 | write | `commit_note`, `save_procedure` | always |
 
-`ingest_paper` runs the OCR pipeline and returns a list of `problems` (a page that failed
-the gate, a figure number the page text does not corroborate, an unresolved reference).
-The agent chooses per problem: reprocess the page with another engine, describe the figure
-again, accept it, or finish and explain. It stages the note, and only `commit_note` moves
+`ingest_paper` runs the OCR pipeline and returns `problems` (page blockers only: a page
+that failed a blocking gate check) and `warnings` (every other failed check, figure grounding
+included). Reference results are not part of its output; `check_references` reports them.
+The agent chooses per problem: reprocess the page with another engine, accept it, or finish
+and explain. It stages the note, and only `commit_note` moves
 it into the vault.
 
 ## Limits
@@ -95,10 +98,10 @@ are asked again. A rejected write goes back to the agent as "rejected by human".
 
 ## OCR pipeline
 
-`ingest_paper` runs: render and route each page (text layer or Granite-Docling-258M),
-assemble, extract and describe figures, run 11 deterministic gate checks per page, retry a
-failing page up the DPI ladder (144, 216, 288; at most 3 attempts), resolve references
-against arXiv and Crossref, then check the document identity. Code gates; the language model
+`ingest_paper` runs: render and route each page (text pages: Docling, then
+Granite-Docling-258M, then the text layer; scanned pages: Granite at 144, 216 and 288 dpi),
+assemble, extract and describe figures, run 13 deterministic gate checks per page, resolve
+references against arXiv and Crossref, then check the document identity. Code gates; the language model
 proposes. Modules are in `src/ra_agent/ocr/`, notes in `src/ra_agent/vault/`.
 
 ## Layout

@@ -147,8 +147,10 @@ class Settings(BaseModel):
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Settings":
-        if path is None:
-            return cls()
+        if path is None:  # the repo's config/pipeline.yaml (found from this file, not cwd), else code defaults
+            path = Path(__file__).resolve().parents[2] / "config" / "pipeline.yaml"
+            if not path.is_file():
+                return cls()
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         return cls.model_validate(data)
 

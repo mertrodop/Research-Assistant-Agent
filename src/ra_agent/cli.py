@@ -15,7 +15,6 @@ from .config import Settings, load_env_file
 from .llm.client import resolve_api_key
 from .ocr.render import page_count
 from .schema import NoteFrontmatter
-from .tools import TOOL_KINDS
 from .vault import Vault
 from .vault.store import _front
 
@@ -36,11 +35,9 @@ def edit_and_validate(path: Path, editor_cmd: str) -> str:
     return ""
 
 
-def decide(payload: dict, vault: Vault, yes_to_reads: bool = False, input_fn=input) -> str:
+def decide(payload: dict, vault: Vault, input_fn=input) -> str:
     """Show a pending write and return "approve" or "reject"."""
     tool, args = payload["tool"], payload["args"]
-    if yes_to_reads and TOOL_KINDS.get(tool) == "read":
-        return "approve"
     print(f"\nThe agent wants to run {tool} with {json.dumps(args, ensure_ascii=False)}\n")
     print(payload["diff"])
     note = vault._papers(vault.staging) / f"{args.get('paper', '')}.md"
@@ -68,7 +65,7 @@ def note_path(messages) -> str:
     return found
 
 
-async def run_agent(task: str, paper: str, settings: Settings, config: str | None, yes_to_reads: bool) -> dict:
+async def run_agent(task: str, paper: str, settings: Settings, config: str | None) -> dict:
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.types import Command
@@ -87,7 +84,7 @@ async def run_agent(task: str, paper: str, settings: Settings, config: str | Non
     run = {"configurable": {"thread_id": uuid.uuid4().hex}}  # state accumulates per thread
     out = await graph.ainvoke({"task": task, "paper": paper}, run)
     while "__interrupt__" in out:
-        answer = decide(out["__interrupt__"][0].value, vault, yes_to_reads)
+        answer = decide(out["__interrupt__"][0].value, vault)
         out = await graph.ainvoke(Command(resume=answer), run)
     return out
 
@@ -100,7 +97,7 @@ def agent_command(args: argparse.Namespace, task: str, paper: str) -> int:
     if not resolve_api_key(settings.models["agent"]):
         print(f"Set {key_env} (in the environment or .env) or point models.agent at a local endpoint.")
         return 2
-    out = asyncio.run(run_agent(task, paper, settings, args.config, args.yes_to_reads))
+    out = asyncio.run(run_agent(task, paper, settings, args.config))
     print(f"\n{out['messages'][-1].content}")
     if path := note_path(out["messages"]):
         print(f"Note: {path}")
@@ -125,7 +122,6 @@ def _parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=None, help="YAML settings, e.g. config/pipeline.yaml")
     common.add_argument("--max-steps", type=int, default=None)
-    common.add_argument("--yes-to-reads", action="store_true", help="skip the prompt for read tools")
     parser = argparse.ArgumentParser(prog="ra", description="Research assistant agent")
     sub = parser.add_subparsers(dest="command", required=True)
     agent = sub.add_parser("agent", parents=[common], help="run the agent on a task")

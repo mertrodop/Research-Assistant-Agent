@@ -24,12 +24,6 @@ def test_decide_asks_again_until_valid(tmp_path, capsys):
     assert "the diff" in capsys.readouterr().out
 
 
-def test_yes_to_reads_only_skips_reads(tmp_path):
-    vault = Vault(tmp_path / "vault", tmp_path / "staging")
-    assert decide({"tool": "list_papers", "args": {}, "diff": ""}, vault, True) == "approve"
-    assert decide(PAYLOAD, vault, True, input_fn=lambda _: "r") == "reject"
-
-
 def test_edit_returns_validation_error(tmp_path):
     note = tmp_path / "note.md"
     assert "title" in edit_and_validate(note, fake_editor(tmp_path, "---\nfoo: 1\n---\nbody"))

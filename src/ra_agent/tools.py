@@ -46,7 +46,8 @@ class ToolError(RuntimeError):
 
 
 def _data(text: str, limit: int = 1500) -> str:
-    return f"<<<DATA\n{text[:limit]}\nDATA>>>"
+    text = text[:limit].replace("DATA>>>", "DATA> >>").replace("<<<DATA", "<< <DATA")  # a PDF cannot close the delimiter
+    return f"<<<DATA\n{text}\nDATA>>>"
 
 
 def _failed(page: PageResult) -> tuple[int, int]:

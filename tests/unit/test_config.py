@@ -31,3 +31,8 @@ def test_local_endpoint_without_key_gets_placeholder(monkeypatch):
     assert resolve_api_key(local) == "not-needed"
     assert isinstance(build_llm(local), OpenAICompatibleVisionClient)
     assert resolve_api_key(ModelSettings()) == ""
+
+
+def test_load_none_reads_repo_yaml(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # found from the repo root, not cwd
+    assert Settings.load().models["agent"].model == "qwen/qwen3-vl-8b-instruct"
