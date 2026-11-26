@@ -126,7 +126,7 @@ def test_frontmatter_round_trips():
     text = render_note(document, "slug")
     front = NoteFrontmatter(**yaml.safe_load(text.split("---")[1]))
     assert front.metadata == "verified"
-    assert front.engines == {"docling": 1, "granite": 0, "text_layer": 0}
+    assert front.engines == {"docling": 1, "granite": 0, "vlm": 0, "text_layer": 0}
     assert front.authors == ["A"]
     assert front.code == ["https://github.com/a/b"]
     assert doc().model_dump() and "unverified" in render_note(doc(), "s")

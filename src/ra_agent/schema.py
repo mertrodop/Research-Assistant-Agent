@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class Route(str, Enum):
     DOCLING = "docling"
     GRANITE = "granite"
+    VLM = "vlm"
     TEXT_LAYER = "text_layer"
 
 
@@ -70,6 +71,7 @@ class PageResult(BaseModel):
     status: Literal["verified", "needs-review"] = "verified"
     review_reasons: list[str] = Field(default_factory=list)
     error: str = ""
+    llm_tables: list[int] = Field(default_factory=list)  # tables replaced by the vision model
 
     @property
     def blockers(self) -> list[CheckResult]:

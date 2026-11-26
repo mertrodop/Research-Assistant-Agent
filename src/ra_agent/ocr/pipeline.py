@@ -15,6 +15,8 @@ from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engines
 from .figures import extract_figures
 from .interpret import describe_figures
 from .repair import repair_merged_rows
+from .tables import reread_tables
+from .vlm import VisionPageEngine
 from .refagent import resolve_references
 from .synth import optimize
 from .gate import check_figure_grounding, document_status, has_blockers, run_gate
@@ -66,10 +68,13 @@ class OcrPipeline:
         vision: LlmClient | None = None,
     ) -> None:
         self.settings = settings or Settings()
-        self.engines = engines or build_engines(self.settings.engine)
+        self.engines = dict(engines or build_engines(self.settings.engine))
         self.cache = cache or PageCache(self.settings.pipeline.cache_dir)
         self.vision = vision
         self._native = NativeTextEngine()
+        self._vision_cache = Path(self.settings.vision_extra.cache_dir) / "ocr"
+        if vision is not None and not isinstance(vision, NullVisionClient):
+            self.engines.setdefault(Route.VLM, VisionPageEngine(vision, self._vision_cache))
 
     def _text_layer(self, pdf_path: Path, page_no: int) -> str:
         text, _ = self._native.ocr_page(pdf_path, page_no)
@@ -97,7 +102,7 @@ class OcrPipeline:
             stats = page_stats(
                 pdf_path, page_no, ink_threshold=self.settings.render.ink_threshold
             )
-        route = route or choose_route(stats, self.settings.router, attempt)
+        route = route or choose_route(stats, self.settings.router, attempt, Route.VLM in self.engines)
         dpi = dpi_for(route, self.settings.render, attempt)
         engine = self.engines[route]
 
@@ -114,6 +119,7 @@ class OcrPipeline:
                 markdown, doctags, error = "", None, str(exc)
             latency = time.perf_counter() - started
 
+        llm_tables: list[int] = []
         text_layer = (
             self._text_layer(pdf_path, stats.page_no)
             if stats.text_layer_chars >= 50
@@ -121,6 +127,11 @@ class OcrPipeline:
         )
         if route is Route.DOCLING:
             markdown = repair_merged_rows(markdown, text_layer)
+            if self.vision is not None and not isinstance(self.vision, NullVisionClient):
+                markdown, llm_tables, _ = reread_tables(
+                    markdown, doctags, text_layer, pdf_path, stats.page_no,
+                    self.settings.render.dpi, self.vision, self._vision_cache / "tables",
+                )
         checks = run_gate(
             markdown,
             self.settings.gate,
@@ -176,6 +187,7 @@ class OcrPipeline:
             status="needs-review" if failed else "verified",
             review_reasons=[check.name for check in checks if not check.passed],
             error=error,
+            llm_tables=llm_tables,
         )
 
     def run(

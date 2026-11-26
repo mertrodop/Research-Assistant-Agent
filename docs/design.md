@@ -156,8 +156,10 @@ its localization.
 
 ### Ingestion workflow (inside the tools)
 
-1. Route each page: text layer present -> **Docling standard**; no text layer (scan) ->
-   **Granite-Docling**; engine error -> next engine. `text_layer` (PyMuPDF) is the last
+1. Route each page: text layer present -> **Docling standard**; little text (under 200
+   chars) -> **vision LLM** (skipped without a key), then Granite-Docling; no text layer
+   (scan) -> **Granite-Docling**; engine error -> next engine. A Docling table that still
+   fails its checks is re-read by the vision LLM and accepted only if grounded in the text layer. `text_layer` (PyMuPDF) is the last
    resort and is marked in the note.
 2. Gate every page with the existing Tier 1 checks against the PDF text layer.
 3. Extract figures; their position comes from Docling's `<!-- image -->` markers.

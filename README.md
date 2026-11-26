@@ -99,9 +99,14 @@ are asked again. A rejected write goes back to the agent as "rejected by human".
 ## OCR pipeline
 
 `ingest_paper` runs: render and route each page (text pages: Docling, then
-Granite-Docling-258M, then the text layer; scanned pages: Granite at 144, 216 and 288 dpi),
+Granite-Docling-258M, then the text layer; low-text pages: the vision model, then Granite,
+then the text layer; pages with no text layer: Granite at 144, 216 and 288 dpi; without an
+API key the vision rung is skipped),
 assemble, extract and describe figures, run 13 deterministic gate checks per page, resolve
-references against arXiv and Crossref, then check the document identity. Code gates; the language model
+references against arXiv and Crossref, then check the document identity. A Docling table that
+still fails its table checks after row repair is read again by the vision model; the reading
+replaces the table only if every word and number is in the PDF text layer (check marks cannot
+be grounded and get a warning callout), otherwise Docling's table and its blocker stay. Code gates; the language model
 proposes. Modules are in `src/ra_agent/ocr/`, notes in `src/ra_agent/vault/`.
 
 ## Layout
