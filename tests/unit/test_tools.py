@@ -105,3 +105,52 @@ def test_reprocess_keeps_doc_level_blocker(ws):
     assert fixed.status == "needs-review"
     ocr = next(c for c in fixed.doc_checks if c.name == "ocr_pages")
     assert ocr.passed
+
+
+def test_reprocess_keeps_the_better_page(ws):
+    from ra_agent.schema import Route
+
+    class Empty:
+        name = "granite_docling"
+
+        def ocr_page(self, pdf, page, dpi=0):
+            return "", None
+
+    ws.pipeline.engines[Route.GRANITE] = Empty()
+    slug = ws.ingest_paper("paper.pdf")["slug"]
+    before = ws._doc(slug).pages[0].markdown
+    worse = ws.reprocess_page(slug, 1, "granite")  # empty output is a blocker
+    assert worse["kept"] == "previous" and "kept the previous result" in worse["summary"]
+    assert worse["problems"] == [] and ws._doc(slug).pages[0].markdown == before
+    tie = ws.reprocess_page(slug, 1, "text_layer")
+    assert tie["kept"] == "previous"
+    # make the current page worse than a fresh text-layer read: the new result wins
+    doc = ws._doc(slug)
+    bad = doc.pages[0].model_copy(update={"checks": [CheckResult(name="x", passed=False, severity=Severity.BLOCKER)]})
+    ws._save(slug, doc.model_copy(update={"pages": [bad] + doc.pages[1:]}))
+    better = ws.reprocess_page(slug, 1, "text_layer")
+    assert better["kept"] == "new" and ws._doc(slug).pages[0].checks != bad.checks
+
+
+def test_findings_split_blockers_from_warnings(ws):
+    from ra_agent.tools import _findings
+
+    page = ws.pipeline.process_page(ws.raw / "paper.pdf", "sha", 1)
+    page = page.model_copy(update={"checks": [
+        CheckResult(name="numeric_agreement", passed=False, severity=Severity.BLOCKER, detail="2 numbers"),
+        CheckResult(name="heading_presence", passed=False, severity=Severity.WARN, detail="1 heading"),
+        CheckResult(name="printable", passed=True),
+    ]})
+    problems, warnings = _findings("p", [page])
+    assert len(problems) == 1 and "numeric_agreement" in problems[0]
+    assert len(warnings) == 1 and "heading_presence" in warnings[0]
+
+
+def test_fallback_is_a_no_op_when_the_note_is_in_the_vault(ws):
+    slug = ws.ingest_paper("paper.pdf")["slug"]
+    assert ws.commit_note(slug)["ok"]
+    # commit renamed the raw PDF to <slug>.pdf
+    for paper in (str(ws.raw / f"{slug}.pdf"), f"{slug}.pdf"):
+        result = ws.fallback_ingest(paper)
+        assert result["ok"] and "already in the vault" in result["summary"], result
+    assert not (ws.staging / f"{slug}.json").exists()

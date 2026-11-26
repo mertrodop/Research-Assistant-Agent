@@ -220,3 +220,14 @@ def test_broken_json_counts_as_invalid_call(ws):
     out, model, _, _ = run(ws, broken + [AIMessage(content="done")])
     assert out["outcome"] == "fallback" and "invalid_calls" in out["failure"]
     assert out["invalid"] == 2 and model.calls == 2
+
+
+def test_limit_after_successful_commit_finishes_without_fallback(ws, slug):
+    script = [call("stage_note", 0, paper=slug), call("commit_note", 1, paper=slug)]
+    script += [call("vault_search", i, query=f"q{i}") for i in range(2, 30)]
+    out, model, _, _ = run(ws, script, paper=slug, resume=["approve"])
+    assert out["outcome"] == "finish" and out["failure"] == "" and out["committed"]
+    assert model.calls == 12 and "step_budget" in out["messages"][-1].content
+    assert (Path(ws.settings.paths.vault_dir) / "Papers" / f"{slug}.md").is_file()
+    assert not (Path(ws.settings.paths.staging_dir) / f"{slug}.json").exists()  # no fallback restage
+    assert episodes(ws)[-1]["outcome"] == "finish"

@@ -22,7 +22,7 @@ from .ocr.pipeline import OcrPipeline
 from .ocr.refagent import resolve_references
 from .ocr.synth import ocr_pages_check
 from .ocr.render import page_count, pdf_sha256
-from .schema import OcrDocument, Route, localize
+from .schema import OcrDocument, PageResult, Route, Severity, localize
 from .vault import Vault
 from .vault.store import _check_slug, slugify
 
@@ -47,6 +47,24 @@ class ToolError(RuntimeError):
 
 def _data(text: str, limit: int = 1500) -> str:
     return f"<<<DATA\n{text[:limit]}\nDATA>>>"
+
+
+def _failed(page: PageResult) -> tuple[int, int]:
+    """(blockers, other failed checks): the order in which page results are compared."""
+    failed = [c for c in page.checks if not c.passed]
+    blockers = sum(c.severity is Severity.BLOCKER for c in failed)
+    return blockers, len(failed) - blockers
+
+
+def _findings(slug: str, pages: list[PageResult], limit: int = 8) -> tuple[list[str], list[str]]:
+    """Blocker findings (`problems`, worth a reprocess) and warning-only findings."""
+    problems, warnings = [], []
+    for page in pages:
+        for check in page.checks:
+            if not check.passed:
+                bucket = problems if check.severity is Severity.BLOCKER else warnings
+                bucket.append(_data(localize(slug, page, check), 200))
+    return problems[:limit], warnings[:limit]
 
 
 def _tool(fn):
@@ -167,12 +185,7 @@ class Workspace:
         doc = self.pipeline.run(path, figures_dir=figures)
         slug = self.vault.stage(doc, figures).slug
         self._save(slug, doc)
-        problems = [
-            _data(localize(slug, page, check), 200)
-            for page in doc.pages
-            for check in page.checks
-            if not check.passed
-        ][:8]
+        problems, warnings = _findings(slug, doc.pages)
         metadata = "verified" if doc.meta and doc.meta.source in {"arxiv", "crossref"} else "unverified"
         return {
             "slug": slug,
@@ -181,8 +194,12 @@ class Workspace:
             "pages": len(doc.pages),
             "review_pages": doc.review_pages,
             "problems": problems,
+            "warnings": warnings,
             "handle": str(self.staging / "Papers" / f"{slug}.md"),
-            "summary": f"{slug}: {doc.status}, {len(doc.pages)} pages, metadata {metadata}, {len(problems)} problems",
+            "summary": (
+                f"{slug}: {doc.status}, {len(doc.pages)} pages, metadata {metadata}, "
+                f"{len(problems)} problems, {len(warnings)} warnings"
+            ),
         }
 
     @_tool
@@ -197,6 +214,19 @@ class Workspace:
             Path(doc.source_pdf), doc.sha256, page, Route(engine), old.attempt + 1
         )
         new = new.model_copy(update={"figures": old.figures})
+        # keep the better page: fewer blockers, then fewer other failed checks; a tie keeps the current one
+        kept = "new" if _failed(new) < _failed(old) else "previous"
+        why = (
+            f"kept the {kept} result: {engine} has {_failed(new)[0]} blockers and {_failed(new)[1]} warnings, "
+            f"the current {old.engine} result has {_failed(old)[0]} blockers and {_failed(old)[1]} warnings"
+        )
+        problems, warnings = _findings(paper, [new if kept == "new" else old], 5)
+        if kept == "previous":
+            return {
+                "status": old.status, "engine": old.engine, "kept": kept,
+                "problems": problems, "warnings": warnings,
+                "summary": f"{paper} page {page}: {why}",
+            }
         pages = [new if p.page_no == page else p for p in doc.pages]
         doc = doc.model_copy(update={"pages": pages})
         checks = [ocr_pages_check(doc) if c.name == "ocr_pages" else c for c in doc.doc_checks]
@@ -208,12 +238,10 @@ class Workspace:
             }
         )
         self._save(paper, doc)
-        problems = [_data(s, 200) for s in new.problems[:5]]
         return {
-            "status": new.status,
-            "engine": new.engine,
-            "problems": problems,
-            "summary": f"{paper} page {page} via {engine}: {new.status}, {len(problems)} problems",
+            "status": new.status, "engine": new.engine, "kept": kept,
+            "problems": problems, "warnings": warnings,
+            "summary": f"{paper} page {page}: {why}",
         }
 
     @_tool
@@ -301,8 +329,17 @@ class Workspace:
         """Deterministic ingest: no figure descriptions, staged as needs-review, never committed."""
         try:
             doc = self._doc(paper)
+            sha = doc.sha256
         except ToolError:  # not ingested yet: treat it as a PDF name
             path = self._pdf(paper if paper.lower().endswith(".pdf") else f"{paper}.pdf")
+            doc, sha = None, pdf_sha256(path)
+        committed = next(
+            (n.stem for n in (self.vault.root / "Papers").glob("*.md") if self.vault._sha_at(self.vault.root, n.stem) == sha),
+            None,
+        )
+        if committed:
+            return {"slug": committed, "summary": f"{committed} is already in the vault; fallback did nothing"}
+        if doc is None:
             figures = self.settings.figures
             describe, figures.describe = figures.describe, False
             try:
