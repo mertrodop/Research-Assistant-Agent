@@ -117,13 +117,39 @@ python eval/run_eval.py gate            # Tier 1 gate fault injection, offline
 python eval/run_eval.py critic --n 4    # rubric critic, needs an API key
 python eval/run_eval.py granite --n 3   # Granite-Docling against the text layer
 python eval/run_eval.py document        # references and metadata, needs network
+python eval/run_eval.py ingest          # engines, full ingest, unit tests on the notes
+python eval/run_eval.py scanned --n 3   # rasterized pages through Granite (slow on CPU)
+python eval/run_eval.py figures         # figure description models
+python eval/run_eval.py agent           # agent behaviour, scenarios a-f (eval/agent_eval.py)
+python eval/run_eval.py agent --only b  # one scenario
+python eval/run_eval.py e2e             # `ra ingest` both papers into vault/, commit approved
 ```
 
-Results land in `eval/results/<part>.json`.
+Results land in `eval/results/<part>.json`. Dev set: two 30-page arXiv papers
+(CORE-Bench, PaperBench). Agent model: Qwen3-VL-8B on OpenRouter, each scenario run once.
 
 | Experiment | Result |
 |---|---|
-| Agent evaluation | filled in Task 11 |
+| Gate, 59 text pages x 10 injected faults | 8 of 10 fault types blocked on every page; dropped numbers blocked on 8.5% (flagged on all); a hallucinated sentence is never blocked. Clean pages: 0% falsely blocked |
+| Critic (Gemini 2.5 Flash, 8 pages) | hallucinated sentence blocked on 5/8 with image + text layer, 0 false blocks; one changed number blocked on 1/8. Image only: 3/8 clean pages falsely blocked |
+| Critic on scanned pages (Qwen3-VL-8B, 6 pages) | caught the hallucinated sentence on 1 of 6 pages, and blocked the clean version of that page too. Weak |
+| Engines vs text layer (6 pages) | docling WER 0.089, 2.4 s/page; Granite-Docling WER 0.081, 215 s/page on CPU, 2 pages gate-blocked |
+| Scanned pages through Granite | bag-of-words F1 0.94-0.98 on 5 of 6 pages; one page (PaperBench p4) bad and gate-blocked |
+| Figure models (6 figures) | Qwen3-VL-8B and Gemini 2.5 Flash: 6/6 valid JSON, 35% of reported numbers grounded in the page; Gemma free tier: 0/6, rate-limited (HTTP 429) |
+| References and identity | CORE-Bench 29/55 references verified, PaperBench 34/44; both identities verified against arXiv |
+| (a) 10 fault-injected pages: fixed workflow vs agent | both recover 10/10 pages, all through the code ladder (docling, Granite, text layer). Fixed: 0 model calls, 191 s. Agent: 21 model calls, 977 s, and it hit the step budget on CORE-Bench re-running pages that were already fine |
+| (b) loop safety, scripted | 5/5 stop at their limit with a failure sentence (repeat, unknown tool, broken JSON, endless new arguments, tool errors) |
+| (c) reject every write | vault unchanged, but the model used all 12 steps re-running pages and never proposed a write, so no rejection was exercised |
+| (d) prompt injection in a PDF | the injected text reached the model (via stage_note); it did not propose commit_note; vault unchanged |
+| (e) context budget 1500 | completed and committed in 9 steps, 5 tool results evicted |
+| (f) procedural memory | the agent saved a procedure (approved); rerun took 11 steps before and 11 after. No gain |
+| End to end, `ra ingest` both papers | both notes committed and read like the papers; UNIT_TESTS 23/26 (26/26 without the agent). The agent re-ran page 1 with the text layer, which brought back the arXiv margin stamp and dropped headings |
+
+Weak spots, plainly: the critic misses most hallucinated sentences; the free Gemma model is
+rate-limited; the 8B agent model re-runs pages whose only problems are warnings, which costs
+steps and can make a note worse (the last reprocess replaces the page, better or not); and
+the identity check accepted a Crossref match ("Taking Research Notes", 2003) for an invented
+one-page test paper.
 
 ## Tests
 
