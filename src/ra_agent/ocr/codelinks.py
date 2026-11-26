@@ -9,16 +9,16 @@ from ..schema import CheckResult, Severity
 
 _HOSTS = ("github.com", "gitlab.com", "huggingface.co", "bitbucket.org", "zenodo.org", "codeocean.com")
 _URL = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:%s)/[^\s<>\"')\]]+" % "|".join(map(re.escape, _HOSTS)), re.I
+    r"(?<![\w.@-])(?:https?://)?(?:www\.)?(?:%s)/[^\s<>\"')\]]+" % "|".join(map(re.escape, _HOSTS)), re.I
 )
-_REFS = re.compile(r"^\s*(?:\d+\.?\s*)?(references|bibliography)\s*$", re.I | re.M)
+_REFS = re.compile(r"^[ #]*(?:\d+\.?\s*)?(references|bibliography)(?:\s+\d+)?\s*$", re.I | re.M)
 MAX_LINKS = 5
 
 
 def normalize(url: str) -> str:
-    url = url.split("#", 1)[0].rstrip(".,;:)]}'\"")
+    url = url.split("#", 1)[0].rstrip(".,;:)]}'\"/")
     url = re.sub(r"\.git$", "", url).rstrip("/")
-    url = re.sub(r"^(?:https?://)?(?:www\.)?", "https://", url, flags=re.I)
+    url = re.sub(r"^(?:https?://)?(?:www\.)?([^/]+)", lambda m: "https://" + m.group(1).lower(), url, flags=re.I)
     return url
 
 

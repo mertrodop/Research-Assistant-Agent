@@ -176,5 +176,20 @@ def test_docling_footnotes_become_definitions():
     doc.add_text(label=DocItemLabel.TEXT, text="Next.")
     doc.add_text(label=DocItemLabel.FOOTNOTE, text="Lone note")
     assert docling_markdown(doc) == (
-        "Body.\n\nNext.\n\n[^18]: The instructions are long. continued here\n\n[^fn-b]: Lone note"
+        "Body.\n\nNext.\n\n[^18]: The instructions are long. continued here\n\n[^fn-a-b]: Lone note"
     )
+
+
+def test_unnumbered_footnote_labels_are_unique_across_pages():
+    from docling_core.types.doc import DocItemLabel, DoclingDocument
+
+    from ra_agent.ocr.engine import docling_markdown
+
+    def page(no):
+        doc = DoclingDocument(name="t")
+        doc.add_text(label=DocItemLabel.FOOTNOTE, text="Plain note")
+        return docling_markdown(doc, no)
+
+    assert page(1) == "[^fn-a-a]: Plain note"
+    assert page(4) == "[^fn-d-a]: Plain note"
+    assert page(27) == "[^fn-aa-a]: Plain note"

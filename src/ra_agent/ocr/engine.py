@@ -60,9 +60,18 @@ class NativeTextEngine:
         return "\n".join(out).strip(), None
 
 
-def docling_markdown(document) -> str:
+def _letters(n: int) -> str:
+    """1 -> a, 26 -> z, 27 -> aa; digits in a footnote label count as numbers in the gate."""
+    out = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        out = string.ascii_lowercase[r] + out
+    return out
+
+
+def docling_markdown(document, page_no: int = 1) -> str:
     """Markdown of a docling document; footnote items move to the end as `[^N]: text`
-    (N is the number the text starts with, else fn-a, fn-b, ...; a digit in the
+    (N is the number the text starts with, else fn-<page>-<k> in letters, unique per document; a digit in the
     label would count as a number in the gate). An unnumbered footnote right after
     another one continues it."""
     from docling_core.types.doc import DocItemLabel
@@ -80,7 +89,7 @@ def docling_markdown(document) -> str:
                 notes[-1] += " " + text
             else:
                 label, text = number.groups() if number else (
-                    f"fn-{string.ascii_lowercase[len(notes) % 26]}", text)
+                    f"fn-{_letters(page_no)}-{_letters(len(notes) + 1)}", text)
                 notes.append(f"[^{label}]: {text}")
         after_note = is_note
     return "\n\n".join([markdown, *notes]).strip()
@@ -113,7 +122,7 @@ class DoclingStandardEngine:
                 raises_on_error=False,
             )
             document = result.document
-            markdown = docling_markdown(document)
+            markdown = docling_markdown(document, page_no)
             doctags = document.export_to_doctags()
         except Exception as exc:  # noqa: BLE001 - engine failures are data, not crashes
             raise OcrEngineError(f"{type(exc).__name__}: {exc}") from exc
