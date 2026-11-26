@@ -1,4 +1,4 @@
-"""Evaluate the OCR pipeline on the papers under data/raw.
+"""Evaluate the OCR pipeline on the dev papers in vault/Papers/*/raw/.
 
     python eval/run_eval.py gate              # Tier 1 gate: fault injection, offline
     python eval/run_eval.py critic --n 4      # Tier 2 critic, image vs text-only (API key)
@@ -22,6 +22,7 @@ import argparse
 import json
 import random
 import re
+import shutil
 import sys
 import time
 from collections import Counter
@@ -39,7 +40,12 @@ from ra_agent.schema import Route  # noqa: E402
 from ra_agent.ocr.gate import has_blockers, run_gate  # noqa: E402
 from ra_agent.ocr.render import page_count, page_stats, pdf_sha256  # noqa: E402
 
-RAW = ROOT / "data" / "raw"
+DATA = ROOT / "eval" / "data"  # generated fixtures, git-ignored
+RAW = DATA / "raw"  # copies of the dev PDFs: the vault moves its own on commit
+for _pdf in (ROOT / "vault" / "Papers").glob("*/raw/*.pdf"):
+    RAW.mkdir(parents=True, exist_ok=True)
+    if not (RAW / _pdf.name).exists():
+        shutil.copy2(_pdf, RAW / _pdf.name)
 OUT = ROOT / "eval" / "results"
 CACHE = ROOT / ".cache" / "eval"
 SETTINGS = Settings.load(ROOT / "config" / "pipeline.yaml")
@@ -406,8 +412,7 @@ def eval_ingest(n: int) -> dict:
     from ra_agent.config import load_env_file
     from ra_agent.ocr.engine import DoclingStandardEngine
     from ra_agent.tools import Workspace
-    import unit_tests
-    from unit_tests import UNIT_TESTS
+    from unit_tests import run_unit_tests
 
     load_env_file(ROOT / ".env")
     docling, native = DoclingStandardEngine(SETTINGS.engine), NativeTextEngine()
@@ -450,29 +455,19 @@ def eval_ingest(n: int) -> dict:
     settings = SETTINGS.model_copy(deep=True)
     settings.paths.staging_dir = str(STAGING)
     settings.engine.device = "cpu"  # the 2 GB GPU OOMs on Granite
+    settings.paths.inbox_dir = str(RAW)  # the dev PDFs, wherever the vault keeps its own
     workspace = Workspace(settings)
-    notes, ingest_times = {}, {}
+    ingest_times = {}
     for pdf in sorted(RAW.glob("*.pdf")):
         started = time.perf_counter()
         result = workspace.ingest_paper(pdf.name)
         ingest_times[pdf.name] = round(time.perf_counter() - started, 1)
         if not result["ok"]:
             raise SystemExit(f"ingest failed: {result['error']}")
-        notes[result["slug"]] = Path(result["handle"])
-    unit_tests.NOTE_DIR = STAGING / "Papers"
-    passed, failed = 0, []
-    for slug, name, check in UNIT_TESTS:
-        path = next((p for s, p in notes.items() if s.startswith(slug)), None)
-        try:
-            ok = path is not None and bool(check(path.read_text(encoding="utf-8")))
-        except Exception:  # noqa: BLE001 - a crashing check is a failed check
-            ok = False
-        passed += ok
-        if not ok:
-            failed.append(f"{slug}:{name}")
+    tests = run_unit_tests(STAGING / "Papers")
     return {
         "engines": engines,
-        "unit_tests": {"passed": passed, "total": len(UNIT_TESTS), "failed": failed},
+        "unit_tests": {k: tests[k] for k in ("passed", "total", "failed")},
         "ingest_seconds": ingest_times,
         "pages": rows,
     }
@@ -512,7 +507,7 @@ def eval_scanned(n: int, dpi: int = 150) -> dict:
     pipeline = OcrPipeline(settings, engines=build_engines(settings.engine), vision=client)
     rows = []
     for pdf in sorted(RAW.glob("*.pdf")):
-        scan = make_scanned(pdf, ROOT / "data" / "eval" / f"{pdf.stem}-scanned.pdf", dpi)
+        scan = make_scanned(pdf, DATA / f"{pdf.stem}-scanned.pdf", dpi)
         sha = pdf_sha256(scan)
         for page in sample_pages(pdf, n):
             started = time.perf_counter()

@@ -62,11 +62,11 @@ def blank_pdf(tmp_path):
 
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
-    raw = tmp_path / "raw"
-    raw.mkdir()
-    make_pdf(raw / "paper.pdf")
+    inbox = tmp_path / "vault" / "Inbox"
+    inbox.mkdir(parents=True)
+    make_pdf(inbox / "paper.pdf")
     settings = Settings()
-    settings.paths.raw_dir = str(raw)
+    settings.paths.inbox_dir = str(inbox)
     settings.paths.vault_dir = str(tmp_path / "vault")
     settings.paths.staging_dir = str(tmp_path / "staging")
     settings.paths.memory_dir = str(tmp_path / "memory")

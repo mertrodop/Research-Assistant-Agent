@@ -2,7 +2,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .cache/
-/vault/
 .env
 *.egg-info/
 build/
@@ -11,4 +10,6 @@ eval/results/
 .superpowers/
 staging/
 memory/
-data/eval/
+eval/data/
+.remember/
+.ruff_cache/

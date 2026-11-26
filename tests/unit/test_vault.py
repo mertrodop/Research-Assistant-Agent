@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 import yaml
@@ -83,14 +84,14 @@ def test_commit_moves_note_and_figures(vault, tmp_path):
     document.pages[0].figures = [figure]
     staged = vault.stage(document, figures_dir=src)
     text = staged.note_path.read_text(encoding="utf-8")
-    link = f"{staged.slug}/fig-1.png"
-    assert f"]({link})" in text
-    assert (staged.note_path.parent / link).read_bytes() == b"png"  # link matches file
-    assert yaml.safe_load(text.split("---")[1])["figure_files"] == [link]
+    assert "](../figures/fig-1.png)" in text
+    assert (staged.note_path.parent / "../figures/fig-1.png").read_bytes() == b"png"  # link matches file
+    assert yaml.safe_load(text.split("---")[1])["figure_files"] == ["figures/fig-1.png"]
 
     note = vault.commit(staged.slug)
-    assert note == vault.root / "Papers" / f"{staged.slug}.md"
-    assert (vault.root / "Papers" / link).is_file()
+    paper = vault.root / "Papers" / staged.slug
+    assert note == paper / "md" / f"{staged.slug}.md"
+    assert (note.parent / "../figures/fig-1.png").is_file()
     assert not staged.note_path.exists() and not staged.figure_dir.exists()
 
 
@@ -118,18 +119,18 @@ def test_search_ranks_by_hits_and_read(vault):
     assert [h["slug"] for h in hits] == [one.slug, two.slug]
     assert set(hits[0]) == {"slug", "title", "line"}
     assert vault.search("zzzz") == []
-    assert vault.read(one.slug, max_chars=10) == (vault.root / "Papers" / f"{one.slug}.md").read_text(encoding="utf-8")[:10]
+    assert vault.read(one.slug, max_chars=10) == vault.note(vault.root, one.slug).read_text(encoding="utf-8")[:10]
 
 
 def test_frontmatter_round_trips():
     document = doc(meta=PaperMeta(title="T", authors=["A"], year="2025", source="arxiv", code=["https://github.com/a/b"]))
-    text = render_note(document, "slug")
+    text = render_note(document)
     front = NoteFrontmatter(**yaml.safe_load(text.split("---")[1]))
     assert front.metadata == "verified"
     assert front.engines == {"docling": 1, "granite": 0, "vlm": 0, "text_layer": 0}
     assert front.authors == ["A"]
     assert front.code == ["https://github.com/a/b"]
-    assert doc().model_dump() and "unverified" in render_note(doc(), "s")
+    assert doc().model_dump() and "unverified" in render_note(doc())
 
 
 def test_invalid_frontmatter_writes_nothing(vault):
@@ -153,34 +154,47 @@ def test_note_lists_only_failed_pages_and_unverified_refs():
         ReferenceCheck(reference=Reference(raw="good ref"), status="verified"),
         ReferenceCheck(reference=Reference(raw="bad ref"), status="unresolved"),
     ]
-    text = render_note(doc().model_copy(update={"pages": [ok, bad], "references": refs}), "s")
+    text = render_note(doc().model_copy(update={"pages": [ok, bad], "references": refs}))
     assert "| 2 | granite" in text and "| 1 | docling" not in text
     assert "bad ref" in text and "good ref" not in text
 
 
-def test_raw_pdf_renamed_on_commit(vault, tmp_path):
-    pdf = tmp_path / "raw.pdf"
+def _source(note: Path) -> str:
+    return yaml.safe_load(note.read_text(encoding="utf-8").split("---")[1])["source_pdf"]
+
+
+def test_pdf_moves_to_raw_on_commit(vault, tmp_path):
+    pdf = tmp_path / "inbox" / "My Paper_v2.pdf"
+    pdf.parent.mkdir()
     pdf.write_bytes(b"%PDF")
     staged = vault.stage(doc(source_pdf=str(pdf)))
-    vault.commit(staged.slug)
-    renamed = tmp_path / f"{staged.slug}.pdf"
-    assert renamed.is_file() and not pdf.exists()
-    note = (vault.root / "Papers" / f"{staged.slug}.md").read_text(encoding="utf-8")
-    assert yaml.safe_load(note.split("---")[1])["source_pdf"] == str(renamed)
+    note = vault.commit(staged.slug)
+    raw = vault.root / "Papers" / staged.slug / "raw" / f"{staged.slug}.pdf"
+    assert raw.read_bytes() == b"%PDF" and not pdf.exists()
+    assert _source(note) == f"Papers/{staged.slug}/raw/{staged.slug}.pdf"
 
 
-def test_raw_pdf_rename_never_overwrites(vault, tmp_path, caplog):
+def test_raw_pdf_never_overwritten(vault, tmp_path, caplog):
     pdf = tmp_path / "raw.pdf"
     pdf.write_bytes(b"new")
     staged = vault.stage(doc(source_pdf=str(pdf)))
-    target = tmp_path / f"{staged.slug}.pdf"
-    target.write_bytes(b"old")
+    raw = vault.root / "Papers" / staged.slug / "raw" / f"{staged.slug}.pdf"
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"old")
     with caplog.at_level(logging.WARNING):
         vault.commit(staged.slug)
-    assert target.read_bytes() == b"old" and pdf.read_bytes() == b"new"
-    note = (vault.root / "Papers" / f"{staged.slug}.md").read_text(encoding="utf-8")
-    assert yaml.safe_load(note.split("---")[1])["source_pdf"] == str(pdf)
+    assert raw.read_bytes() == b"old" and pdf.read_bytes() == b"new"
     assert "already exists" in caplog.text
+
+
+def test_recommit_of_a_paper_in_papers_keeps_its_raw_pdf(vault):
+    raw = vault.root / "Papers" / "an-example" / "raw" / "an-example.pdf"
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"%PDF")
+    staged = vault.stage(doc(title="An Example", source_pdf=str(raw)))
+    assert staged.slug == "an-example"
+    vault.commit(staged.slug)
+    assert raw.read_bytes() == b"%PDF"
 
 
 def test_commit_cleans_pipeline_figures_and_staging(vault):
@@ -203,29 +217,16 @@ def test_bad_slugs_rejected(vault, bad):
             call(bad)
 
 
-def test_long_source_path_with_spaces_survives_rename(vault, tmp_path):
-    folder = tmp_path / ("a long folder name with spaces " * 3)
-    folder.mkdir()
-    pdf = folder / "my raw paper name.pdf"
-    pdf.write_bytes(b"%PDF")
-    assert len(str(pdf)) > 80
-    staged = vault.stage(doc(source_pdf=str(pdf)))
-    assert yaml.safe_load(staged.note_path.read_text(encoding="utf-8").split("---")[1])["source_pdf"] == str(pdf)
-    note = vault.commit(staged.slug).read_text(encoding="utf-8")
-    assert yaml.safe_load(note.split("---")[1])["source_pdf"] == str(folder / f"{staged.slug}.pdf")
-    assert note.split("---", 2)[2].startswith("\n# ")
-
-
 def test_note_drops_heading_that_repeats_the_title():
     document = doc()
     document.markdown = "## PaperBench: Evaluating AI's Ability to Replicate AI Research\n\nBody."
-    text = render_note(document, "s")
+    text = render_note(document)
     assert "## PaperBench" not in text and "\n# PaperBench" in text and "Body." in text
     document.markdown = "## Abstract\n\nBody."
-    assert "## Abstract" in render_note(document, "s")
+    assert "## Abstract" in render_note(document)
 
 
 def test_validation_lists_verified_page_with_no_text_layer_warning():
     document = doc()
     document.pages[0].review_reasons = ["no_text_layer"]
-    assert "| 1 | docling | 1 | verified | no_text_layer |" in render_note(document, "s")
+    assert "| 1 | docling | 1 | verified | no_text_layer |" in render_note(document)

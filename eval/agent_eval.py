@@ -27,7 +27,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from run_eval import OUT, RAW, ROOT, SETTINGS
+from run_eval import DATA, OUT, RAW, ROOT, SETTINGS
 
 from ra_agent.agent import ScriptedChatModel, build_chat_model, build_graph
 from ra_agent.config import load_env_file
@@ -99,7 +99,7 @@ def workspace(name: str, faults: dict | None = None, raw: Path = RAW, fresh: boo
     if fresh:
         shutil.rmtree(base, ignore_errors=True)
     settings = SETTINGS.model_copy(deep=True)
-    settings.paths.raw_dir = str(raw)
+    settings.paths.inbox_dir = str(raw)
     settings.paths.staging_dir = str(base / "staging")
     settings.paths.vault_dir = str(base / "vault")
     settings.paths.memory_dir = str(base / "memory")
@@ -361,7 +361,7 @@ def eval_injection() -> dict:
         (t, k) for t in INJECTION_TASKS.items() for k in (("injected", True), ("control", False))
     ):
         name = f"{task_name}_{kind}"
-        raw = ROOT / "data" / "eval" / f"injection_{kind}"
+        raw = DATA / f"injection_{kind}"
         pdf = injection_pdf(raw / "grounded-note-taking.pdf", inject)
         task = template.format(pdf=pdf.name)
         vault = BASE / f"d_{name}" / "vault"
@@ -435,7 +435,6 @@ def eval_end_to_end() -> dict:
     """`ra ingest` for both dev papers. Only the approval prompt is replaced: commit_note
     is approved, any other write is rejected. Writes to the real vault/."""
     import unit_tests
-    from unit_tests import UNIT_TESTS
 
     from ra_agent import cli
     from ra_agent.config import Settings
@@ -451,10 +450,14 @@ def eval_end_to_end() -> dict:
 
     cli.decide = approve_commit
     settings = Settings.load(None)  # what `ra ingest` uses without --config
+    inbox = ROOT / settings.paths.inbox_dir
+    inbox.mkdir(parents=True, exist_ok=True)
     runs = []
     for pdf in (CB, PB):
         started = time.perf_counter()
-        out = run(cli.run_agent(ingest_task(pdf), f"data/raw/{pdf}", settings, None, False))
+        if not (inbox / pdf).exists():  # the user drops the PDF into the Inbox
+            shutil.copy2(RAW / pdf, inbox / pdf)
+        out = run(cli.run_agent(ingest_task(pdf), str(inbox / pdf), settings, None))
         runs.append({
             "pdf": pdf[:12], "outcome": out["outcome"], "failure": out["failure"], "steps": out["steps"],
             "proposed": [_short(c) for m in out["messages"] if isinstance(m, AIMessage) for c in m.tool_calls],
@@ -462,18 +465,8 @@ def eval_end_to_end() -> dict:
             "wall_s": round(time.perf_counter() - started, 1),
         })
         print(runs[-1], flush=True)
-    unit_tests.NOTE_DIR = ROOT / "vault" / "Papers"
-    notes = {p.stem: p for p in unit_tests.NOTE_DIR.glob("*.md")}
-    passed, failed = 0, []
-    for slug, name, check in UNIT_TESTS:
-        path = next((p for s, p in notes.items() if s.startswith(slug)), None)
-        try:
-            ok = path is not None and bool(check(path.read_text(encoding="utf-8")))
-        except Exception:  # noqa: BLE001 - a crashing check is a failed check
-            ok = False
-        passed += ok
-        failed += [] if ok else [f"{slug}:{name}"]
+    tests = unit_tests.run_unit_tests(ROOT / "vault" / "Papers")
     return {
-        "runs": runs, "decisions": decisions, "vault_notes": sorted(notes),
-        "unit_tests": {"passed": passed, "total": len(UNIT_TESTS), "failed": failed},
+        "runs": runs, "decisions": decisions, "vault_notes": tests["notes"],
+        "unit_tests": {k: tests[k] for k in ("passed", "total", "failed")},
     }

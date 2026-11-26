@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-NOTE_DIR = Path(".")  # folder that holds the notes, set by run_eval before the run
+NOTE_DIR = Path(".")  # folder of the note being checked; figure links are relative to it
 
 CB, PB = "core-bench", "paperbench"
 STAMP = re.compile(r"^arXiv:\d{4}\.\d{4,5}v\d+\s+\[", re.M)  # the margin stamp, e.g. arXiv:2409.11363v1 [cs.CL]
@@ -86,3 +86,20 @@ UNIT_TESTS: list[tuple[str, str, object]] = [
     (PB, "footnote_18_definition", lambda t: "[^18]: The instructions" in t),
     (CB, "code_link_core_bench", lambda t: "github.com/siegelz/core-bench" in fm_block(t)),
 ]
+
+
+def run_unit_tests(papers: Path) -> dict:
+    """Run UNIT_TESTS on the notes in <papers>/<slug>/md/<slug>.md."""
+    global NOTE_DIR
+    notes = {p.stem: p for p in sorted(papers.glob("*/md/*.md"))}
+    passed, failed = 0, []
+    for slug, name, check in UNIT_TESTS:
+        path = next((p for s, p in notes.items() if s.startswith(slug)), None)
+        try:
+            NOTE_DIR = path.parent
+            ok = bool(check(path.read_text(encoding="utf-8")))
+        except Exception:  # noqa: BLE001 - a missing note or a crashing check is a failed check
+            ok = False
+        passed += ok
+        failed += [] if ok else [f"{slug}:{name}"]
+    return {"passed": passed, "total": len(UNIT_TESTS), "failed": failed, "notes": sorted(notes)}

@@ -42,7 +42,7 @@ def episodes(ws):
 
 
 def vault_files(ws):
-    root = Path(ws.settings.paths.vault_dir)
+    root = Path(ws.settings.paths.vault_dir) / "Papers"  # the Inbox is not a note
     return [p for p in root.rglob("*") if p.is_file()] if root.exists() else []
 
 
@@ -97,6 +97,9 @@ def test_validate_call(ws):
     assert validate_call("reprocess_page", {"paper": "x", "page": "a", "engine": "granite"}, tools, paths)
     assert validate_call("ingest_paper", {"pdf": "/etc/passwd"}, tools, paths)
     assert validate_call("ingest_paper", {"pdf": "..\\x.pdf"}, tools, paths)
+    inside = [paths.inbox_dir, paths.vault_dir, paths.staging_dir]
+    assert all(validate_call("ingest_paper", {"pdf": f"{d}/a.pdf"}, tools, paths) is None for d in inside)
+    assert validate_call("ingest_paper", {"pdf": f"{paths.vault_dir}/../elsewhere/a.pdf"}, tools, paths)
     # free text may contain slashes
     assert validate_call("save_procedure", {"name": "n", "text": "use granite/docling"}, tools, paths) is None
 
@@ -129,16 +132,16 @@ def test_approval_interrupt_reject_and_approve(ws, slug):
 
     out, _, _, _ = run(ws, script, paper=slug, resume=["approve"], thread="a")
     assert out["outcome"] == "finish" and out["tried"] == ["commit_note"]
-    assert (Path(ws.settings.paths.vault_dir) / "Papers" / f"{slug}.md").is_file()
+    assert ws.vault.note(ws.vault.root, slug).is_file()
 
 
 def test_edit_during_interrupt_survives_resume(ws, slug):
     script = [call("commit_note", paper=slug), AIMessage(content="done")]
     _, _, graph, config = run(ws, script, paper=slug)
-    staged = ws.vault._papers(ws.vault.staging) / f"{slug}.md"
+    staged = ws.vault.note(ws.vault.staging, slug)
     staged.write_text(staged.read_text() + "\nhuman edit\n")
     asyncio.run(graph.ainvoke(Command(resume="approve"), config))
-    assert "human edit" in (Path(ws.settings.paths.vault_dir) / "Papers" / f"{slug}.md").read_text()
+    assert "human edit" in ws.vault.note(ws.vault.root, slug).read_text()
 
 
 def test_reject_then_same_write_is_repeated_action(ws, slug):
@@ -146,7 +149,7 @@ def test_reject_then_same_write_is_repeated_action(ws, slug):
     assert "__interrupt__" not in out
     assert out["outcome"] == "fallback" and "repeated_action" in out["failure"]
     assert vault_files(ws) == [] and model.calls == 2
-    staged = (Path(ws.settings.paths.staging_dir) / "Papers" / f"{slug}.md").read_text()
+    staged = ws.vault.note(ws.vault.staging, slug).read_text()
     assert "needs-review" in staged
 
 
@@ -228,6 +231,6 @@ def test_limit_after_successful_commit_finishes_without_fallback(ws, slug):
     out, model, _, _ = run(ws, script, paper=slug, resume=["approve"])
     assert out["outcome"] == "finish" and out["failure"] == "" and out["committed"]
     assert model.calls == 12 and "step_budget" in out["messages"][-1].content
-    assert (Path(ws.settings.paths.vault_dir) / "Papers" / f"{slug}.md").is_file()
+    assert ws.vault.note(ws.vault.root, slug).is_file()
     assert not (Path(ws.settings.paths.staging_dir) / f"{slug}.json").exists()  # no fallback restage
     assert episodes(ws)[-1]["outcome"] == "finish"

@@ -43,10 +43,19 @@ class PipelineSettings(BaseModel):
 
 
 class PathSettings(BaseModel):
-    raw_dir: str = "data/raw"
+    inbox_dir: str = "vault/Inbox"  # new PDFs; commit moves one to Papers/<slug>/raw/
     vault_dir: str = "vault"
     staging_dir: str = "staging"
     memory_dir: str = "memory"
+
+    def list_pdfs(self) -> list[Path]:
+        """PDFs the tools may read: the Inbox and each paper's raw/ folder."""
+        found = [*Path(self.inbox_dir).glob("*.pdf"), *Path(self.vault_dir, "Papers").glob("*/raw/*.pdf")]
+        return sorted(found)
+
+    def find_pdf(self, name: str) -> Path:
+        """A bare file name: the Inbox first, then a paper's raw/ folder."""
+        return next((p for p in self.list_pdfs() if p.name == name), Path(self.inbox_dir) / name)
 
 
 class FigureSettings(BaseModel):

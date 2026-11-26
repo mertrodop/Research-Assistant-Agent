@@ -40,7 +40,7 @@ def decide(payload: dict, vault: Vault, input_fn=input) -> str:
     tool, args = payload["tool"], payload["args"]
     print(f"\nThe agent wants to run {tool} with {json.dumps(args, ensure_ascii=False)}\n")
     print(payload["diff"])
-    note = vault._papers(vault.staging) / f"{args.get('paper', '')}.md"
+    note = vault.note(vault.staging, args.get("paper", ""))
     while True:
         choice = parse_decision(input_fn("[a]pprove, [e]dit, [r]eject? "))
         if choice == "edit" and tool == "commit_note" and note.is_file():
@@ -105,16 +105,15 @@ def agent_command(args: argparse.Namespace, task: str, paper: str) -> int:
 
 
 def papers_command(args: argparse.Namespace) -> int:
-    raw = Path(Settings.load(args.config).paths.raw_dir)
-    for pdf in sorted(raw.glob("*.pdf")):
+    for pdf in Settings.load(args.config).paths.list_pdfs():
         print(f"{pdf.stem}  ({page_count(pdf)} pages)")
     return 0
 
 
-def _in_raw_dir(pdf: str, config: str | None) -> str:
-    """A bare file name lives in raw_dir."""
+def _find_pdf(pdf: str, config: str | None) -> str:
+    """A bare file name lives in the Inbox, or in a paper's raw/ folder."""
     if pdf and len(Path(pdf).parts) == 1:
-        return str(Path(Settings.load(config).paths.raw_dir) / pdf)
+        return str(Settings.load(config).paths.find_pdf(pdf))
     return pdf
 
 
@@ -128,7 +127,7 @@ def _parser() -> argparse.ArgumentParser:
     agent.add_argument("task")
     agent.add_argument("--paper", default="", help="PDF the task is about")
     sub.add_parser("ingest", parents=[common], help="ingest a PDF into the vault").add_argument("pdf")
-    sub.add_parser("papers", parents=[common], help="list the PDFs in raw_dir")
+    sub.add_parser("papers", parents=[common], help="list the PDFs in the Inbox and the vault")
     sub.add_parser("serve", parents=[common], help="run the MCP server on stdio")
     return parser
 
@@ -143,9 +142,9 @@ def main(argv: list[str] | None = None) -> int:
         serve(["--config", args.config] if args.config else [])
         return 0
     if args.command == "ingest":
-        pdf = _in_raw_dir(args.pdf, args.config)
+        pdf = _find_pdf(args.pdf, args.config)
         return agent_command(args, f"Ingest {Path(pdf).name} into the vault", pdf)
-    return agent_command(args, args.task, _in_raw_dir(args.paper, args.config))
+    return agent_command(args, args.task, _find_pdf(args.paper, args.config))
 
 
 if __name__ == "__main__":

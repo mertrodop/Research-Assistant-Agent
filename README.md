@@ -29,15 +29,15 @@ and without the file the code defaults apply.
 ## Use
 
 ```bash
-ra papers                                   # PDFs in data/raw
-ra ingest paperbench-evaluating-ais-ability-to-replicate-ai-research.pdf
+ra papers                                   # PDFs in vault/Inbox and vault/Papers/*/raw
+ra ingest my-paper.pdf                      # drop the PDF into vault/Inbox first
 ra agent "Which ingested papers mention agents?"
 ra agent "Re-check the references of this paper" --paper core-bench-fostering-the-credibility-of-published-research-through-a-computational-reproducibility.pdf
 ra serve                                    # the same tools as an MCP server on stdio
 ```
 
 Options for `ingest` and `agent`: `--config FILE`, `--max-steps N`.
-A bare PDF name is looked up in `data/raw`. Exit code: `0` when the agent finished,
+A bare PDF name is looked up in `vault/Inbox`, then in `vault/Papers/*/raw` (re-ingest). Exit code: `0` when the agent finished,
 `1` when a limit stopped it and the deterministic fallback ran, `2` when no API key is set.
 The run ends with the answer (or the failure sentence) and the path of the note.
 
@@ -113,10 +113,13 @@ proposes. Modules are in `src/ra_agent/ocr/`, notes in `src/ra_agent/vault/`.
 ## Layout
 
 ```
-data/raw/     source PDFs, never modified
-staging/      notes and OCR state waiting for approval (git-ignored)
-vault/        approved notes, vault/Papers/<slug>.md (git-ignored)
+vault/Inbox/                 new PDFs wait here (tracked via .gitkeep)
+vault/Papers/<slug>/raw/<slug>.pdf     the source PDF, moved here by commit_note
+vault/Papers/<slug>/md/<slug>.md       the note; figure links are ../figures/fig-N.png
+vault/Papers/<slug>/figures/fig-N.png
+staging/      notes and OCR state waiting for approval, same layout (git-ignored)
 memory/       episodes and procedures (git-ignored)
+eval/data/    generated eval fixtures: scanned copies, injection PDFs (git-ignored)
 ```
 
 ## Evaluation

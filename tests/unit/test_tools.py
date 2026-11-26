@@ -1,4 +1,6 @@
 import json
+import re
+from pathlib import Path
 
 from conftest import make_pdf
 
@@ -17,7 +19,7 @@ def test_ingest_ok_unverified_metadata(ws):
     assert result["ok"] and result["slug"] and result["problems"] == []
     assert result["metadata"] == "unverified"
     small(result)
-    assert (ws.staging / "Papers" / f"{result['slug']}.md").is_file()
+    assert ws.vault.note(ws.staging, result["slug"]).is_file()
 
 
 def test_ingest_missing_and_outside(ws, tmp_path):
@@ -46,7 +48,7 @@ def test_reprocess_stage_commit(ws, tmp_path):
     again = Workspace(ws.settings, engines=ws.pipeline.engines, vision=NullVisionClient())
     assert again.stage_note(slug)["ok"]
     assert ws.commit_note(slug)["ok"]
-    assert (tmp_path / "vault" / "Papers" / f"{slug}.md").is_file()
+    assert ws.vault.note(ws.vault.root, slug).is_file()
     assert ws.vault_search("pipeline")["ok"]
     read = ws.vault_read(slug)
     assert read["ok"] and "<<<DATA" in read["text"]
@@ -84,7 +86,7 @@ def test_ingest_writes_unverified_frontmatter(ws):
     import yaml
 
     slug = ws.ingest_paper("paper.pdf")["slug"]
-    note = (ws.staging / "Papers" / f"{slug}.md").read_text(encoding="utf-8")
+    note = ws.vault.note(ws.staging, slug).read_text(encoding="utf-8")
     assert yaml.safe_load(note.split("---", 2)[1])["metadata"] == "unverified"
 
 
@@ -135,7 +137,7 @@ def test_reprocess_keeps_the_better_page(ws):
 def test_findings_split_blockers_from_warnings(ws):
     from ra_agent.tools import _findings
 
-    page = ws.pipeline.process_page(ws.raw / "paper.pdf", "sha", 1)
+    page = ws.pipeline.process_page(ws._pdf("paper.pdf"), "sha", 1)
     page = page.model_copy(update={"checks": [
         CheckResult(name="numeric_agreement", passed=False, severity=Severity.BLOCKER, detail="2 numbers"),
         CheckResult(name="heading_presence", passed=False, severity=Severity.WARN, detail="1 heading"),
@@ -149,8 +151,8 @@ def test_findings_split_blockers_from_warnings(ws):
 def test_fallback_is_a_no_op_when_the_note_is_in_the_vault(ws):
     slug = ws.ingest_paper("paper.pdf")["slug"]
     assert ws.commit_note(slug)["ok"]
-    # commit renamed the raw PDF to <slug>.pdf
-    for paper in (str(ws.raw / f"{slug}.pdf"), f"{slug}.pdf"):
+    # commit moved the PDF from the Inbox to Papers/<slug>/raw/<slug>.pdf
+    for paper in (str(ws.vault.paper(ws.vault.root, slug) / "raw" / f"{slug}.pdf"), f"{slug}.pdf"):
         result = ws.fallback_ingest(paper)
         assert result["ok"] and "already in the vault" in result["summary"], result
     assert not (ws.staging / f"{slug}.json").exists()
@@ -163,7 +165,28 @@ def test_data_cannot_be_closed_by_pdf_text():
     assert out.count("DATA>>>") == 1 and out.count("<<<DATA") == 1
 
 
-def test_reprocess_accepts_vlm(ws):
-    import inspect, typing
-    hint = typing.get_type_hints(type(ws).reprocess_page.__wrapped__ if hasattr(type(ws).reprocess_page, "__wrapped__") else type(ws).reprocess_page)
-    assert "vlm" in typing.get_args(hint["engine"])
+def test_reprocess_accepts_vlm():
+    import typing
+
+    assert "vlm" in typing.get_args(typing.get_type_hints(Workspace.reprocess_page)["engine"])
+
+
+def test_commit_moves_the_inbox_pdf_and_note_links_resolve(ws):
+    slug = ws.ingest_paper("paper.pdf")["slug"]
+    inbox_pdf = Path(ws.paths.inbox_dir) / "paper.pdf"
+    assert inbox_pdf.is_file()
+    note = Path(ws.commit_note(slug)["path"])
+    paper = ws.vault.paper(ws.vault.root, slug)
+    assert note == paper / "md" / f"{slug}.md"
+    assert (paper / "raw" / f"{slug}.pdf").is_file() and not inbox_pdf.exists()
+    for link in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", note.read_text(encoding="utf-8")):
+        assert (note.parent / link).is_file(), link
+
+
+def test_reingest_finds_the_raw_pdf_of_a_paper_already_in_papers(ws):
+    slug = ws.ingest_paper("paper.pdf")["slug"]
+    ws.commit_note(slug)
+    assert not (Path(ws.paths.inbox_dir) / "paper.pdf").exists()
+    again = ws.ingest_paper(f"{slug}.pdf")
+    assert again["ok"] and again["slug"] == slug
+    assert any(p["pdf"] == f"{slug}.pdf" for p in ws.list_papers()["papers"])

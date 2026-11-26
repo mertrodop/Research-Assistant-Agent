@@ -16,7 +16,7 @@ def dump_frontmatter(data: dict) -> str:
     return f"---\n{body}\n---\n"
 
 
-def _frontmatter(document: OcrDocument, slug: str) -> str:
+def _frontmatter(document: OcrDocument) -> str:
     verified = sum(1 for page in document.pages if page.status == "verified")
     figures = [figure for page in document.pages for figure in page.figures]
     meta = NoteFrontmatter(
@@ -38,7 +38,7 @@ def _frontmatter(document: OcrDocument, slug: str) -> str:
         created_at=document.created_at.isoformat(timespec="seconds"),
         tags=["ocr", document.status],
         figures=len(figures),
-        figure_files=[f"{slug}/{figure.filename}" for figure in figures],
+        figure_files=[f"figures/{figure.filename}" for figure in figures],
         figure_readings=sum(
             1
             for figure in figures
@@ -118,14 +118,12 @@ def _drop_title_heading(markdown: str, title: str) -> str:
     return markdown
 
 
-def render_note(document: OcrDocument, slug: str) -> str:
-    # The pipeline writes figure links as figures/fig-N.png; the vault keeps them
-    # beside the note in <slug>/.
-    body = _drop_title_heading(document.markdown, document.title).replace(
-        "](figures/", f"]({slug}/"
-    )
+def render_note(document: OcrDocument) -> str:
+    # The pipeline writes figure links as figures/fig-N.png; the note lives in
+    # Papers/<slug>/md/ and the figures in Papers/<slug>/figures/.
+    body = _drop_title_heading(document.markdown, document.title).replace("](figures/", "](../figures/")
     parts = [
-        _frontmatter(document, slug),
+        _frontmatter(document),
         f"# {document.title}",
         "",
         body,

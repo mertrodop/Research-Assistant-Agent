@@ -20,10 +20,10 @@ def _looks_like_path(value: str) -> bool:
 
 def _outside(value: str, paths: PathSettings) -> bool:
     path = Path(value.replace("\\", "/"))
-    if len(path.parts) == 1:  # bare name: the workspace reads it from raw_dir
-        path = Path(paths.raw_dir) / path
+    if len(path.parts) == 1:  # bare name: the workspace looks in the Inbox
+        path = Path(paths.inbox_dir) / path
     resolved = path.resolve()
-    roots = (paths.raw_dir, paths.vault_dir, paths.staging_dir)
+    roots = (paths.inbox_dir, paths.vault_dir, paths.staging_dir)
     return not any(resolved.is_relative_to(Path(root).resolve()) for root in roots)
 
 

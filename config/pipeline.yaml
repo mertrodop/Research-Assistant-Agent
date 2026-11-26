@@ -28,7 +28,7 @@ pipeline:
   cache_dir: .cache/ocr
 
 paths:
-  raw_dir: data/raw
+  inbox_dir: vault/Inbox
   vault_dir: vault
   staging_dir: staging
   memory_dir: memory

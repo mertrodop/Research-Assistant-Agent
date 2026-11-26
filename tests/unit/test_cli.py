@@ -38,7 +38,7 @@ def test_papers_lists_dev_slugs(capsys):
 
 def test_edit_then_approve(tmp_path, capsys, monkeypatch):
     vault = Vault(tmp_path / "vault", tmp_path / "staging")
-    note = vault._papers(vault.staging) / "x.md"
+    note = vault.note(vault.staging, "x")
     note.parent.mkdir(parents=True)
     note.write_text("old")
     body = (

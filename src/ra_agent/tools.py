@@ -109,7 +109,7 @@ class Workspace:
         self.vision = vision or build_llm(settings.models["vision"])
         self.pipeline = OcrPipeline(self.settings, engines=engines, vision=self.vision)
         paths = self.settings.paths
-        self.raw = Path(paths.raw_dir)
+        self.paths = paths
         self.staging = Path(paths.staging_dir)
         self.vault = Vault(Path(paths.vault_dir), self.staging)
         self._docs: dict[str, OcrDocument] = {}
@@ -135,13 +135,10 @@ class Workspace:
     def _pdf(self, pdf: str) -> Path:
         path = Path(pdf)
         if len(path.parts) == 1:
-            path = self.raw / path
-        resolved, root = path.resolve(), self.raw.resolve()
-        if not resolved.is_relative_to(root):
-            raise ToolError(f"pdf {pdf!r} is outside {self.raw}")
-        if resolved.suffix.lower() != ".pdf" or not resolved.is_file():
-            raise ToolError(f"no such PDF {pdf!r} under {self.raw}")
-        return resolved
+            path = self.paths.find_pdf(pdf)
+        if path.resolve() not in {p.resolve() for p in self.paths.list_pdfs()}:
+            raise ToolError(f"no such PDF {pdf!r} in {self.paths.inbox_dir} or a paper's raw/ folder")
+        return path.resolve()
 
     def _figures_dir(self, doc: OcrDocument) -> Path:
         return self.staging / "figures" / doc.sha256[:12]
@@ -149,13 +146,13 @@ class Workspace:
     # -- read
     @_tool
     def list_papers(self) -> dict:
-        pdfs = sorted(self.raw.glob("*.pdf")) if self.raw.is_dir() else []
+        pdfs = self.paths.list_pdfs()
         papers = [{"pdf": p.name, "pages": page_count(p)} for p in pdfs[:20]]
         ingested = sorted(p.stem for p in self.staging.glob("*.json"))[:20]
         return {
             "papers": papers,
             "ingested": ingested,
-            "summary": f"{len(pdfs)} PDFs in {self.raw}, {len(ingested)} ingested",
+            "summary": f"{len(pdfs)} PDFs in the Inbox and the vault, {len(ingested)} ingested",
         }
 
     @_tool
@@ -196,7 +193,7 @@ class Workspace:
             "review_pages": doc.review_pages,
             "problems": problems,
             "warnings": warnings,
-            "handle": str(self.staging / "Papers" / f"{slug}.md"),
+            "handle": str(self.vault.note(self.staging, slug)),
             "summary": (
                 f"{slug}: {doc.status}, {len(doc.pages)} pages, metadata {metadata}, "
                 f"{len(problems)} problems, {len(warnings)} warnings"
@@ -335,7 +332,7 @@ class Workspace:
             path = self._pdf(paper if paper.lower().endswith(".pdf") else f"{paper}.pdf")
             doc, sha = None, pdf_sha256(path)
         committed = next(
-            (n.stem for n in (self.vault.root / "Papers").glob("*.md") if self.vault._sha_at(self.vault.root, n.stem) == sha),
+            (n.stem for n in self.vault.notes(self.vault.root) if self.vault._sha_at(self.vault.root, n.stem) == sha),
             None,
         )
         if committed:

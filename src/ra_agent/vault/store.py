@@ -57,11 +57,18 @@ class Vault:
         self.root = Path(root)
         self.staging = Path(staging)
 
-    def _papers(self, base: Path) -> Path:
-        return base / "Papers"
+    def paper(self, base: Path, slug: str) -> Path:
+        """Papers/<slug>/ holds raw/<slug>.pdf, md/<slug>.md and figures/."""
+        return base / "Papers" / slug
+
+    def note(self, base: Path, slug: str) -> Path:
+        return self.paper(base, slug) / "md" / f"{slug}.md"
+
+    def notes(self, base: Path) -> list[Path]:
+        return sorted((base / "Papers").glob("*/md/*.md"))
 
     def _sha_at(self, base: Path, slug: str) -> str | None:
-        note = self._papers(base) / f"{slug}.md"
+        note = self.note(base, slug)
         return _front(note.read_text(encoding="utf-8")).get("sha256") if note.is_file() else None
 
     def _slug(self, document: OcrDocument) -> str:
@@ -75,26 +82,26 @@ class Vault:
             n += 1
 
     def stage(self, document: OcrDocument, figures_dir: Path | None = None) -> StagedNote:
-        """Render and write the note and its figures under staging/Papers/."""
+        """Render and write the note and its figures under staging/Papers/<slug>/."""
         slug = self._slug(document)
-        text = render_note(document, slug)  # validates frontmatter before any write
-        note_path = self._papers(self.staging) / f"{slug}.md"
-        figure_dir = self._papers(self.staging) / slug
-        note_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.rmtree(figure_dir, ignore_errors=True)
+        text = render_note(document)  # validates frontmatter before any write
+        paper = self.paper(self.staging, slug)
+        note_path = self.note(self.staging, slug)
+        shutil.rmtree(paper, ignore_errors=True)
+        note_path.parent.mkdir(parents=True)
         figures = [f for page in document.pages for f in page.figures]
         if figures and figures_dir is not None:
-            figure_dir.mkdir()
+            (paper / "figures").mkdir()
             for figure in figures:
-                shutil.copy2(Path(figures_dir) / figure.filename, figure_dir / figure.filename)
+                shutil.copy2(Path(figures_dir) / figure.filename, paper / "figures" / figure.filename)
         note_path.write_text(text, encoding="utf-8")
-        return StagedNote(slug, note_path, figure_dir, document.status)
+        return StagedNote(slug, note_path, paper / "figures", document.status)
 
     def diff(self, slug: str) -> str:
         """Unified diff of the staged note against the vault note; full text if new."""
         _check_slug(slug)
-        staged = (self._papers(self.staging) / f"{slug}.md").read_text(encoding="utf-8")
-        current = self._papers(self.root) / f"{slug}.md"
+        staged = self.note(self.staging, slug).read_text(encoding="utf-8")
+        current = self.note(self.root, slug)
         if not current.is_file():
             return staged
         return "".join(
@@ -107,30 +114,32 @@ class Vault:
         )
 
     def commit(self, slug: str) -> Path:
-        """Move the staged note and figures into the vault; rename the raw PDF to <slug>.pdf."""
+        """Move the staged note and figures into Papers/<slug>/ and the PDF into its raw/."""
         _check_slug(slug)
-        staged = self._papers(self.staging) / f"{slug}.md"
-        if not staged.is_file():
+        staged, staged_note = self.paper(self.staging, slug), self.note(self.staging, slug)
+        if not staged_note.is_file():
             raise FileNotFoundError(f"nothing staged for {slug}")
-        text = staged.read_text(encoding="utf-8")
+        text = staged_note.read_text(encoding="utf-8")
         front = _front(text)
-        source_pdf = Path(front.get("source_pdf", ""))
-        if source_pdf.is_file() and source_pdf.name != f"{slug}.pdf":
-            renamed = source_pdf.with_name(f"{slug}.pdf")
-            if renamed.exists():
-                log.warning("%s already exists; left %s unrenamed", renamed, source_pdf)
+        paper = self.paper(self.root, slug)
+        raw = paper / "raw" / f"{slug}.pdf"
+        source = Path(front.get("source_pdf", ""))
+        if source.is_file() and source.resolve() != raw.resolve():
+            if raw.exists():
+                log.warning("%s already exists; left %s where it is", raw, source)
             else:
-                source_pdf.rename(renamed)
-                rest = text.split("---", 2)[2]
-                text = dump_frontmatter({**front, "source_pdf": str(renamed)}) + rest.lstrip("\n")
-        target = self._papers(self.root) / f"{slug}.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        figures = self._papers(self.staging) / slug
-        if figures.is_dir():
-            shutil.rmtree(self._papers(self.root) / slug, ignore_errors=True)
-            shutil.move(figures, self._papers(self.root) / slug)
+                raw.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(source, raw)
+        if raw.is_file():  # relative to the vault, so the note survives a move of the repo
+            rest = text.split("---", 2)[2]
+            text = dump_frontmatter({**front, "source_pdf": f"Papers/{slug}/raw/{slug}.pdf"}) + rest.lstrip("\n")
+        for part in ("md", "figures"):
+            shutil.rmtree(paper / part, ignore_errors=True)
+            if (staged / part).is_dir():
+                shutil.move(staged / part, paper / part)
+        target = self.note(self.root, slug)
         target.write_text(text, encoding="utf-8")
-        staged.unlink()
+        shutil.rmtree(staged, ignore_errors=True)
         # the pipeline's own figure output for this paper
         shutil.rmtree(self.staging / "figures" / str(front.get("sha256", "x"))[:12], ignore_errors=True)
         return target
@@ -138,7 +147,7 @@ class Vault:
     def search(self, query: str, limit: int = 5) -> list[dict]:
         words = query.lower().split()
         hits = []
-        for note in self._papers(self.root).glob("*.md"):
+        for note in self.notes(self.root):
             text = note.read_text(encoding="utf-8")
             lines = text.splitlines()
             count = sum(text.lower().count(word) for word in words)
@@ -151,5 +160,4 @@ class Vault:
 
     def read(self, slug: str, max_chars: int = 4000) -> str:
         _check_slug(slug)
-        note = self._papers(self.root) / f"{slug}.md"
-        return note.read_text(encoding="utf-8")[:max_chars]
+        return self.note(self.root, slug).read_text(encoding="utf-8")[:max_chars]
