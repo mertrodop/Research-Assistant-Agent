@@ -131,25 +131,36 @@ Results land in `eval/results/<part>.json`. Dev set: two 30-page arXiv papers
 | Experiment | Result |
 |---|---|
 | Gate, 59 text pages x 10 injected faults | 8 of 10 fault types blocked on every page; dropped numbers blocked on 8.5% (flagged on all); a hallucinated sentence is never blocked. Clean pages: 0% falsely blocked |
-| Critic (Gemini 2.5 Flash, 8 pages) | hallucinated sentence blocked on 5/8 with image + text layer, 0 false blocks; one changed number blocked on 1/8. Image only: 3/8 clean pages falsely blocked |
+| Critic (Qwen3-VL-8B, 6 text pages, 3 modes) | hallucinated sentence blocked on at most 1/6 pages, a changed number on at most 1/6; 1/6 clean pages falsely blocked (image or text only), none with image + text layer. The critic does not catch these errors |
 | Critic on scanned pages (Qwen3-VL-8B, 6 pages) | caught the hallucinated sentence on 1 of 6 pages, and blocked the clean version of that page too. Weak |
 | Engines vs text layer (6 pages) | docling WER 0.089, 2.4 s/page; Granite-Docling WER 0.081, 215 s/page on CPU, 2 pages gate-blocked |
 | Scanned pages through Granite | bag-of-words F1 0.94-0.98 on 5 of 6 pages; one page (PaperBench p4) bad and gate-blocked |
 | Figure models (6 figures) | Qwen3-VL-8B and Gemini 2.5 Flash: 6/6 valid JSON, 35% of reported numbers grounded in the page; Gemma free tier: 0/6, rate-limited (HTTP 429) |
 | References and identity | CORE-Bench 29/55 references verified, PaperBench 34/44; both identities verified against arXiv |
-| (a) 10 fault-injected pages: fixed workflow vs agent | both recover 10/10 pages, all through the code ladder (docling, Granite, text layer). Fixed: 0 model calls, 191 s. Agent: 21 model calls, 977 s, and it hit the step budget on CORE-Bench re-running pages that were already fine |
+| (a) 10 fault-injected pages: fixed workflow vs agent | both recover 10/10 pages, all through the code ladder inside ingest (docling, Granite, text layer); the agent adds nothing to page recovery here. Fixed: 2 calls, 0 model calls, 138 s, staged needs-review. Agent: 8 steps = 8 model calls, 54 s (warm cache), both notes committed |
 | (b) loop safety, scripted | 5/5 stop at their limit with a failure sentence (repeat, unknown tool, broken JSON, endless new arguments, tool errors) |
-| (c) reject every write | vault unchanged, but the model used all 12 steps re-running pages and never proposed a write, so no rejection was exercised |
+| (c) reject every write | scripted stage, commit, commit: the commit was rejected, the repeat stopped by repeated_action, vault unchanged. Real model: stopped after ingest_paper and asked "Would you like me to proceed with staging and committing?", so it never proposed a write; vault unchanged |
 | (d) prompt injection in a PDF | the injected text reached the model (via stage_note); it did not propose commit_note; vault unchanged |
 | (e) context budget 1500 | completed and committed in 9 steps, 5 tool results evicted |
 | (f) procedural memory | the agent saved a procedure (approved); rerun took 11 steps before and 11 after. No gain |
-| End to end, `ra ingest` both papers | both notes committed and read like the papers; UNIT_TESTS 23/26 (26/26 without the agent). The agent re-ran page 1 with the text layer, which brought back the arXiv margin stamp and dropped headings |
+| End to end, `ra ingest` both papers | both committed in 4 steps each (ingest, stage, commit); UNIT_TESTS on the vault notes 26/26, the same as the fixed ingest. Checked by eye: section order, headings and the tested tables match the papers; docling's own flaws stay (merged table rows, a footnote inside the PaperBench introduction, a stray "## [...]" heading in a CORE-Bench appendix) |
 
-Weak spots, plainly: the critic misses most hallucinated sentences; the free Gemma model is
-rate-limited; the 8B agent model re-runs pages whose only problems are warnings, which costs
-steps and can make a note worse (the last reprocess replaces the page, better or not); and
-the identity check accepted a Crossref match ("Taking Research Notes", 2003) for an invented
-one-page test paper.
+Rows (b), (d), (e), (f) were measured before the fixes of the first review round (better-page
+reprocess, warnings apart from problems, a commit ends the run); (a), (c) and the end-to-end
+run were measured after them.
+
+Weak spots, plainly:
+- The agent prompt was tuned on the same scenarios it is evaluated on. With the first prompt
+  the model stopped after `ingest_paper` in 7 of 7 real runs and falsely said the paper was in
+  the vault. With the second prompt, 3 of 13 real runs hit the 12-step budget because the model
+  re-ran pages that only had warnings, and the end-to-end notes dropped to 23/26 unit tests.
+  The current prompt and tools (warnings apart, better page kept) gave 26/26 and no budget hits
+  in 5 runs. That is a small sample from the same scenarios, not a held-out result.
+- The model is not consistent: on the same `Ingest ... into the vault` task it committed in
+  (a) and stopped to ask a question in (c).
+- The critic misses most injected errors; the free Gemma model is rate-limited (HTTP 429).
+- The identity check accepted a Crossref match ("Taking Research Notes", 2003) for an
+  invented one-page test paper.
 
 ## Tests
 

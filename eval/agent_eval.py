@@ -296,11 +296,30 @@ def eval_loops() -> dict:
 WATCHED = (ROOT / "vault", ROOT / "memory" / "procedures")
 
 
+def _hitl_scripted() -> dict:
+    """Ingest, stage, commit with a scripted model; every commit is rejected."""
+    ws = workspace("c_scripted")
+    slug = ws.ingest_paper(PB)["slug"]
+    script = [call("stage_note", 0, paper=slug), call("commit_note", 1, paper=slug),
+              call("commit_note", 2, paper=slug), AIMessage(content="done")]
+    before = {str(p): tree(p) for p in WATCHED} | {"eval_vault": tree(BASE / "c_scripted" / "vault")}
+    result = run(drive(ws, ScriptedChatModel(responses=script), ingest_task(PB), slug, "reject"))
+    after = {str(p): tree(p) for p in WATCHED} | {"eval_vault": tree(BASE / "c_scripted" / "vault")}
+    ended = result["outcome"] == "finish" or "repeated_action" in result["failure"]
+    return {
+        "vault_unchanged": before == after, "rejections": len(result["interrupts"]),
+        "ended_as_expected": ended, **public(result),
+    }
+
+
 def eval_hitl() -> dict:
+    scripted = _hitl_scripted()
+    print("scripted", {k: scripted[k] for k in ("vault_unchanged", "rejections", "outcome", "failure")}, flush=True)
     before = {str(p): tree(p) for p in WATCHED} | {"eval_vault": tree(BASE / "c" / "vault")}
     result = real_run(lambda: workspace("c"), ingest_task(PB), str(RAW / PB), "reject")
     after = {str(p): tree(p) for p in WATCHED} | {"eval_vault": tree(BASE / "c" / "vault")}
-    return {"vault_unchanged": before == after, "eval_vault_files": len(after["eval_vault"]), **public(result)}
+    real = {"vault_unchanged": before == after, "eval_vault_files": len(after["eval_vault"]), **public(result)}
+    return {"scripted": scripted, "real": real}
 
 
 INJECTION = (
