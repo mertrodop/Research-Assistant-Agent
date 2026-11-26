@@ -72,6 +72,7 @@ class PageResult(BaseModel):
     review_reasons: list[str] = Field(default_factory=list)
     error: str = ""
     llm_tables: list[int] = Field(default_factory=list)  # tables replaced by the vision model
+    llm_table_rejects: list[str] = Field(default_factory=list)  # why a failing table kept Docling's reading
 
     @property
     def blockers(self) -> list[CheckResult]:
@@ -89,9 +90,14 @@ class PageResult(BaseModel):
 
 def _sentence(page: PageResult, check: CheckResult) -> str:
     evidence = f" ({check.evidence})" if check.evidence else ""
+    rejects = (
+        f"; vision re-read kept Docling's table: {'; '.join(page.llm_table_rejects)}"
+        if check.name.startswith("table_") and page.llm_table_rejects
+        else ""
+    )
     return (
         f"page {page.page_no}: {check.name}: {check.detail}{evidence}; "
-        f"engine {page.engine}, attempt {page.attempt}"
+        f"engine {page.engine}, attempt {page.attempt}{rejects}"
     )
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 import fitz
 
 from ..llm.client import LlmClient, VisionError
-from .gate import _MARKS, _cells, check_table_cells, check_table_headers, check_table_merged_rows, check_tables
+from .gate import MARKS, _cells, check_table_cells, check_table_headers, check_table_merged_rows, check_tables
 from .vlm import TABLE_PROMPT, read_image
 
 _LOC = re.compile(r"<otsl>((?:<loc_\d+>){4})")
@@ -70,33 +70,47 @@ def reread_tables(
     dpi: int,
     client: LlmClient,
     cache_dir: str | Path,
-) -> tuple[str, list[int], dict[int, str]]:
-    """Replace each still-failing table by the vision reading when it is grounded and
-    passes the table checks. Returns (markdown, replaced table numbers, reasons for
-    the tables kept). Without a text layer nothing can be grounded: unchanged."""
+) -> tuple[str, list[int], list[str]]:
+    """Replace each still-failing table by the vision reading when it is grounded, passes
+    the table checks and overlaps the table it replaces. Returns (markdown, replaced
+    table numbers, reasons the failing tables were kept). Without a text layer nothing
+    can be grounded, and when the markdown and doctags table counts differ the box of
+    table n may be another table: unchanged."""
     boxes = table_boxes(doctags)
-    blocks, replaced, kept, n = _blocks(markdown), [], {}, 0
+    blocks, replaced, kept, n = _blocks(markdown), [], [], 0
     if len(text_layer.strip()) < 50:
         return markdown, replaced, kept
+    count = sum(is_table for is_table, _ in blocks)
+    aligned = count == len(boxes)
     for i, (is_table, text) in enumerate(blocks):
         if not is_table:
             continue
         n += 1
         failing = _failing(text)
-        if not failing or n > len(boxes):
+        if not failing:
+            continue
+        if not aligned:
+            kept.append(f"table {n}: {count} tables in the text but {len(boxes)} located")
             continue
         try:
             new = read_image(client, _crop(pdf_path, page_no, boxes[n - 1], dpi), TABLE_PROMPT, cache_dir)
         except VisionError as exc:
-            kept[n] = f"vision error: {str(exc)[:80]}"
+            kept.append(f"table {n}: vision error: {str(exc)[:80]}")
             continue
         new = "\n".join(l for l in new.splitlines() if l.strip().startswith("|"))
         missing, still = ungrounded(new, text_layer), _failing(new)
-        if not new or missing or still:
-            kept[n] = f"not grounded: {', '.join(missing[:8])}" if missing else (
-                f"still fails {', '.join(still)}" if new else "no table in reply")
+        old, got = _tokens(text), _tokens(new)
+        overlap = len(old & got) / min(len(old), len(got)) if old and got else 0.0
+        if not new or missing or still or overlap < 0.5:
+            why = (
+                "no table in reply" if not new
+                else f"not grounded: {', '.join(missing[:8])}" if missing
+                else f"still fails {', '.join(still)}" if still
+                else f"reply is another table (token overlap {overlap:.2f})"
+            )
+            kept.append(f"table {n}: {why}")
             continue
-        if any(m in c for c in sum((_cells(r) for r in new.splitlines()), []) for m in _MARKS):
+        if any(m in c for c in sum((_cells(r) for r in new.splitlines()), []) for m in MARKS):
             new += "\n\n" + _NOTE
         blocks[i] = (True, new)
         replaced.append(n)

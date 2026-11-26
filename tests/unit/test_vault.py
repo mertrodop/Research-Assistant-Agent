@@ -223,3 +223,9 @@ def test_note_drops_heading_that_repeats_the_title():
     assert "## PaperBench" not in text and "\n# PaperBench" in text and "Body." in text
     document.markdown = "## Abstract\n\nBody."
     assert "## Abstract" in render_note(document, "s")
+
+
+def test_validation_lists_verified_page_with_no_text_layer_warning():
+    document = doc()
+    document.pages[0].review_reasons = ["no_text_layer"]
+    assert "| 1 | docling | 1 | verified | no_text_layer |" in render_note(document, "s")

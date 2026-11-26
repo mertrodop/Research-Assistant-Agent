@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import re
 
-from .gate import _MARKS, _cells, _is_separator
+from .gate import MARKS, _cells, _is_separator
 
 
 def _marks(cell: str) -> list[str]:
     tokens = cell.split()
-    return tokens if tokens and all(t in _MARKS for t in tokens) else []
+    return tokens if tokens and all(t in MARKS for t in tokens) else []
 
 
 def _split_label(label: str, n: int, text_layer: str) -> list[str] | None:

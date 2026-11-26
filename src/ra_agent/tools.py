@@ -205,7 +205,7 @@ class Workspace:
 
     @_tool
     def reprocess_page(
-        self, paper: str, page: int, engine: Literal["docling", "granite", "text_layer"]
+        self, paper: str, page: int, engine: Literal["docling", "granite", "vlm", "text_layer"]
     ) -> dict:
         doc = self._doc(paper)
         old = next((p for p in doc.pages if p.page_no == page), None)

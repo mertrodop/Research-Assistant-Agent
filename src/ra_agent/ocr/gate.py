@@ -212,7 +212,7 @@ def check_table_cells(markdown: str) -> CheckResult:
     return _check("table_cells", True, detail="no repeated rows or empty columns")
 
 
-_MARKS = "✓✗✔✘√×"
+MARKS = "✓✗✔✘√×"
 
 
 def check_table_merged_rows(markdown: str) -> CheckResult:
@@ -223,7 +223,7 @@ def check_table_merged_rows(markdown: str) -> CheckResult:
         for row in block[1:]:
             if _is_separator(row):
                 continue
-            cell = next((c for c in _cells(row) if sum(x in _MARKS for x in c.split()) >= 2), None)
+            cell = next((c for c in _cells(row) if sum(x in MARKS for x in c.split()) >= 2), None)
             if cell:
                 return _check(
                     "table_merged_rows",

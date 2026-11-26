@@ -99,9 +99,10 @@ are asked again. A rejected write goes back to the agent as "rejected by human".
 ## OCR pipeline
 
 `ingest_paper` runs: render and route each page (text pages: Docling, then
-Granite-Docling-258M, then the text layer; low-text pages: the vision model, then Granite,
-then the text layer; pages with no text layer: Granite at 144, 216 and 288 dpi; without an
-API key the vision rung is skipped),
+Granite-Docling-258M, then the text layer; low-text and scanned pages: the vision model, then Granite
+at 216 and 288 dpi (low-text pages end on the text layer, scans on Granite); without an
+API key the vision rung is skipped and Granite runs at 144, 216 and 288 dpi). A page under
+200 text-layer characters carries a `no_text_layer` warning: it cannot be checked against the PDF. Then
 assemble, extract and describe figures, run 13 deterministic gate checks per page, resolve
 references against arXiv and Crossref, then check the document identity. A Docling table that
 still fails its table checks after row repair is read again by the vision model; the reading

@@ -56,7 +56,7 @@ def _frontmatter(document: OcrDocument, slug: str) -> str:
 def _validation(document: OcrDocument) -> str:
     lines = ["## Validation", "", "| page | route | attempt | status | failed checks |", "|---|---|---|---|---|"]
     for page in document.pages:
-        if page.status == "verified" and not page.error:
+        if page.status == "verified" and not page.error and not page.review_reasons:
             continue
         failed = ", ".join(page.review_reasons) or "-"
         if page.error:

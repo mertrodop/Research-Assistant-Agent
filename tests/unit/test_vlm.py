@@ -85,3 +85,45 @@ def test_vlm_ladder():
     stats = PageStats(page_no=1, text_layer_chars=120, ink_ratio=0.1, width_pt=595, height_pt=842)
     r = Settings().router
     assert [choose_route(stats, r, a, vlm=True) for a in (1, 2, 3)] == [Route.VLM, Route.GRANITE, Route.TEXT_LAYER]
+
+
+TWO = "| A | B |\n|---|---|\n| apples | 1 |\n| pears | 2 |"
+MERGED = "| Files | Code |\n|---|---|\n| Source code reproduce log | ✓ ✓ |"
+TEXT2 = TEXT + "A B apples 1 pears 2\n"
+
+
+class TwoTables(Docling):
+    def __init__(self, doctags):
+        self.doctags = doctags
+
+    def ocr_page(self, pdf_path, page_no, dpi=0):
+        return f"{TEXT2}\n\n{MERGED}\n\n{TWO}\n", self.doctags
+
+
+def test_crop_of_another_table_is_not_swapped_in(tmp_path):
+    one = "<otsl><loc_40><loc_100><loc_400><loc_200>"
+    # both tables located: the reply is the other table (TWO), tokens grounded but no overlap
+    page = pipeline(tmp_path, Fake(TWO), {Route.DOCLING: TwoTables(one + one)}).process_page(
+        make(tmp_path, TEXT2), "s", 1, Route.DOCLING
+    )
+    assert MERGED in page.markdown and page.llm_tables == []
+    assert "another table" in page.llm_table_rejects[0]
+    assert "vision re-read kept" in " ".join(page.problems)
+    # one box for two tables: counts differ, nothing is sent
+    client = Fake(GOOD)
+    page = pipeline(tmp_path, client, {Route.DOCLING: TwoTables(one)}).process_page(
+        make(tmp_path, TEXT2), "s", 1, Route.DOCLING
+    )
+    assert client.calls == 0 and "located" in page.llm_table_rejects[0]
+
+
+def test_scanned_page_via_vlm_warns_no_text_layer(tmp_path):
+    pdf = tmp_path / "blank.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(pdf)
+    reply = "# Scanned title\n\nA scanned paragraph that the vision model transcribed from the page image."
+    page = pipeline(tmp_path, Fake(reply)).process_page(pdf, "s", 1)
+    assert page.route is Route.VLM
+    assert "no_text_layer" in page.review_reasons
+    assert any(c.name == "no_text_layer" and not c.passed for c in page.checks)

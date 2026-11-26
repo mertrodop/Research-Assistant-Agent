@@ -120,6 +120,7 @@ class OcrPipeline:
             latency = time.perf_counter() - started
 
         llm_tables: list[int] = []
+        rejects: list[str] = []
         text_layer = (
             self._text_layer(pdf_path, stats.page_no)
             if stats.text_layer_chars >= 50
@@ -128,7 +129,7 @@ class OcrPipeline:
         if route is Route.DOCLING:
             markdown = repair_merged_rows(markdown, text_layer)
             if self.vision is not None and not isinstance(self.vision, NullVisionClient):
-                markdown, llm_tables, _ = reread_tables(
+                markdown, llm_tables, rejects = reread_tables(
                     markdown, doctags, text_layer, pdf_path, stats.page_no,
                     self.settings.render.dpi, self.vision, self._vision_cache / "tables",
                 )
@@ -141,6 +142,15 @@ class OcrPipeline:
             ink_ratio=stats.ink_ratio,
             route=route,
         )
+        if stats.text_layer_chars < self.settings.router.native_text_min_chars:
+            checks.append(
+                CheckResult(
+                    name="no_text_layer",
+                    passed=False,
+                    severity=Severity.WARN,
+                    detail="content cannot be checked against the PDF text; read from the image",
+                )
+            )
         if error:
             checks.insert(
                 0,
@@ -188,6 +198,7 @@ class OcrPipeline:
             review_reasons=[check.name for check in checks if not check.passed],
             error=error,
             llm_tables=llm_tables,
+            llm_table_rejects=rejects,
         )
 
     def run(
