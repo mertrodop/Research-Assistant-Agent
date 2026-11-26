@@ -208,3 +208,15 @@ def test_failing_stage_still_interrupts_with_reason(ws):
     (pending,) = out["__interrupt__"]
     assert pending.value["diff"].startswith("diff unavailable: KeyError")
     assert vault_files(ws) == []
+
+
+def test_broken_json_counts_as_invalid_call(ws):
+    broken = [
+        AIMessage(content="", invalid_tool_calls=[
+            {"name": "ingest_paper", "args": '{"pdf": "paper.pdf"', "id": f"b{i}", "error": "bad json"}
+        ])
+        for i in range(2)
+    ]
+    out, model, _, _ = run(ws, broken + [AIMessage(content="done")])
+    assert out["outcome"] == "fallback" and "invalid_calls" in out["failure"]
+    assert out["invalid"] == 2 and model.calls == 2

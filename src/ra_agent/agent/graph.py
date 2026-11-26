@@ -147,6 +147,13 @@ def build_graph(
         except Exception as exc:  # noqa: BLE001 - any model failure ends in the fallback
             return update | stop(state, "llm_error", f"{type(exc).__name__}: {exc}"[:200], steps + 1)
         update["messages"] = messages + [reply]
+        if reply.invalid_tool_calls and not reply.tool_calls:  # broken JSON arguments
+            update["messages"].extend(
+                ToolMessage(f"invalid call: arguments of {c['name']} are not valid JSON",
+                            tool_call_id=c["id"] or "invalid", status="error")
+                for c in reply.invalid_tool_calls
+            )
+            update["invalid"] = state["invalid"] + 1
         if reply.tool_calls:
             call = reply.tool_calls[0]
             if signature(call["name"], call["args"]) in state["signatures"]:
@@ -158,6 +165,8 @@ def build_graph(
         if state["failure"]:
             return "fallback"
         last = state["messages"][-1]
+        if isinstance(last, ToolMessage):  # an invalid call answered in the agent node
+            return "agent"
         return "guard" if isinstance(last, AIMessage) and last.tool_calls else "report"
 
     async def preview(name: str, args: dict) -> str:
@@ -236,7 +245,7 @@ def build_graph(
     graph.add_node("report", report)
     graph.add_edge(START, "load_memory")
     graph.add_edge("load_memory", "agent")
-    graph.add_conditional_edges("agent", route, ["guard", "fallback", "report"])
+    graph.add_conditional_edges("agent", route, ["agent", "guard", "fallback", "report"])
     graph.add_edge("tools", "agent")
     graph.add_edge("fallback", "report")
     graph.add_edge("report", END)
