@@ -230,3 +230,15 @@ def test_validation_lists_verified_page_with_no_text_layer_warning():
     document = doc()
     document.pages[0].review_reasons = ["no_text_layer"]
     assert "| 1 | docling | 1 | verified | no_text_layer |" in render_note(document)
+
+
+def test_commit_resolves_relative_source_against_the_vault(vault, tmp_path, monkeypatch):
+    raw = vault.root / "Papers" / "an-example" / "raw" / "an-example.pdf"
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"%PDF")
+    staged = vault.stage(doc(title="An Example", source_pdf="Papers/an-example/raw/an-example.pdf"))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    note = vault.commit(staged.slug)
+    assert raw.read_bytes() == b"%PDF" and _source(note) == "Papers/an-example/raw/an-example.pdf"

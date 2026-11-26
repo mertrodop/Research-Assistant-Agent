@@ -113,7 +113,10 @@ def papers_command(args: argparse.Namespace) -> int:
 def _find_pdf(pdf: str, config: str | None) -> str:
     """A bare file name lives in the Inbox, or in a paper's raw/ folder."""
     if pdf and len(Path(pdf).parts) == 1:
-        return str(Settings.load(config).paths.find_pdf(pdf))
+        try:
+            return str(Settings.load(config).paths.find_pdf(pdf))
+        except FileNotFoundError as exc:
+            raise SystemExit(str(exc)) from None
     return pdf
 
 

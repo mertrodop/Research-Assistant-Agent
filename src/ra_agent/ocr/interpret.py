@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -137,7 +138,8 @@ def _read(figure: FigureRef, image_path: Path, page_text: str, client: LlmClient
 
 def _cache_path(root: Path, sha: str, filename: str, model: str) -> Path:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", model)
-    return root / sha / f"{Path(filename).stem}__{slug}.json"
+    prompt = hashlib.sha256((PROMPT + COMPACT_HINT).encode()).hexdigest()[:8]  # a new prompt is a miss
+    return root / sha / f"{Path(filename).stem}__{slug}__{prompt}.json"
 
 
 def describe_figure(

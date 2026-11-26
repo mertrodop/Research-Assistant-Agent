@@ -36,3 +36,12 @@ def test_local_endpoint_without_key_gets_placeholder(monkeypatch):
 def test_load_none_reads_repo_yaml(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # found from the repo root, not cwd
     assert Settings.load().models["agent"].model == "qwen/qwen3-vl-8b-instruct"
+
+
+def test_find_pdf_names_where_it_looked(tmp_path):
+    import pytest
+
+    paths = Settings().paths.model_copy(update={"inbox_dir": str(tmp_path / "in"), "vault_dir": str(tmp_path / "v")})
+    with pytest.raises(FileNotFoundError) as err:
+        paths.find_pdf("x.pdf")
+    assert str(tmp_path / "in") in str(err.value) and str(tmp_path / "v" / "Papers") in str(err.value)

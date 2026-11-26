@@ -123,7 +123,7 @@ class Vault:
         front = _front(text)
         paper = self.paper(self.root, slug)
         raw = paper / "raw" / f"{slug}.pdf"
-        source = Path(front.get("source_pdf", ""))
+        source = self.root / front.get("source_pdf", "")  # relative to the vault, or absolute
         if source.is_file() and source.resolve() != raw.resolve():
             if raw.exists():
                 log.warning("%s already exists; left %s where it is", raw, source)

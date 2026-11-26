@@ -135,7 +135,10 @@ class Workspace:
     def _pdf(self, pdf: str) -> Path:
         path = Path(pdf)
         if len(path.parts) == 1:
-            path = self.paths.find_pdf(pdf)
+            try:
+                path = self.paths.find_pdf(pdf)
+            except FileNotFoundError as exc:
+                raise ToolError(str(exc)) from None
         if path.resolve() not in {p.resolve() for p in self.paths.list_pdfs()}:
             raise ToolError(f"no such PDF {pdf!r} in {self.paths.inbox_dir} or a paper's raw/ folder")
         return path.resolve()

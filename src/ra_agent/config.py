@@ -55,7 +55,10 @@ class PathSettings(BaseModel):
 
     def find_pdf(self, name: str) -> Path:
         """A bare file name: the Inbox first, then a paper's raw/ folder."""
-        return next((p for p in self.list_pdfs() if p.name == name), Path(self.inbox_dir) / name)
+        found = next((p for p in self.list_pdfs() if p.name == name), None)
+        if found is None:
+            raise FileNotFoundError(f"no PDF {name!r} in {self.inbox_dir} or in {Path(self.vault_dir, 'Papers')}/*/raw")
+        return found
 
 
 class FigureSettings(BaseModel):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -24,11 +25,22 @@ from .render import PageStats, page_count, page_stats, pdf_sha256, render_page
 from .router import choose_route, dpi_for
 
 
-class PageCache:
-    """Caches OCR output per (pdf sha, page, route, dpi). Only clean pages are stored."""
+PIPELINE_VERSION = "2"  # bump whenever the processing of page output (engines, markdown conversion) changes
 
-    def __init__(self, root: str | Path) -> None:
-        self.root = Path(root)
+
+def _cache_version() -> str:
+    try:
+        docling = importlib.metadata.version("docling")
+    except importlib.metadata.PackageNotFoundError:
+        docling = "none"
+    return f"v{PIPELINE_VERSION}-docling{docling}"
+
+
+class PageCache:
+    """Caches OCR output per (version, pdf sha, page, route, dpi). Only clean pages are stored."""
+
+    def __init__(self, root: str | Path, version: str | None = None) -> None:
+        self.root = Path(root) / (version or _cache_version())
 
     def _path(self, sha: str, page_no: int, route: Route, dpi: int) -> Path:
         return self.root / sha / f"p{page_no:04d}_{route.value}_{dpi}.json"

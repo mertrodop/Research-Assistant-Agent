@@ -193,3 +193,9 @@ def test_unnumbered_footnote_labels_are_unique_across_pages():
     assert page(1) == "[^fn-a-a]: Plain note"
     assert page(4) == "[^fn-d-a]: Plain note"
     assert page(27) == "[^fn-aa-a]: Plain note"
+
+
+def test_page_cache_is_versioned(tmp_path):
+    PageCache(tmp_path, "v1").put("sha", 1, Route.DOCLING, 0, "old output", None)
+    assert PageCache(tmp_path, "v1").get("sha", 1, Route.DOCLING, 0) == ("old output", None)
+    assert PageCache(tmp_path, "v2").get("sha", 1, Route.DOCLING, 0) is None
