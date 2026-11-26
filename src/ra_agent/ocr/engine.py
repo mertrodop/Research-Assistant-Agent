@@ -63,18 +63,26 @@ class NativeTextEngine:
 def docling_markdown(document) -> str:
     """Markdown of a docling document; footnote items move to the end as `[^N]: text`
     (N is the number the text starts with, else fn-a, fn-b, ...; a digit in the
-    label would count as a number in the gate)."""
+    label would count as a number in the gate). An unnumbered footnote right after
+    another one continues it."""
     from docling_core.types.doc import DocItemLabel
 
     labels = set(DocItemLabel) - {DocItemLabel.FOOTNOTE}
     markdown = html.unescape(document.export_to_markdown(labels=labels) or "").strip()
-    notes = []
+    notes: list[str] = []
+    after_note = False
     for item, _ in document.iterate_items():
-        if item.label is DocItemLabel.FOOTNOTE:
+        is_note = item.label is DocItemLabel.FOOTNOTE
+        if is_note:
             text = html.unescape(" ".join(item.text.split()))
             number = re.match(r"(\d+)\s+(.*)", text)
-            label, text = number.groups() if number else (f"fn-{string.ascii_lowercase[len(notes) % 26]}", text)
-            notes.append(f"[^{label}]: {text}")
+            if number is None and after_note:  # continuation of the previous footnote
+                notes[-1] += " " + text
+            else:
+                label, text = number.groups() if number else (
+                    f"fn-{string.ascii_lowercase[len(notes) % 26]}", text)
+                notes.append(f"[^{label}]: {text}")
+        after_note = is_note
     return "\n\n".join([markdown, *notes]).strip()
 
 

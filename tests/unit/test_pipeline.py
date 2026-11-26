@@ -172,5 +172,9 @@ def test_docling_footnotes_become_definitions():
     doc = DoclingDocument(name="t")
     doc.add_text(label=DocItemLabel.TEXT, text="Body.")
     doc.add_text(label=DocItemLabel.FOOTNOTE, text="18 The instructions\nare long.")
-    doc.add_text(label=DocItemLabel.FOOTNOTE, text="Plain note")
-    assert docling_markdown(doc) == "Body.\n\n[^18]: The instructions are long.\n\n[^fn-b]: Plain note"
+    doc.add_text(label=DocItemLabel.FOOTNOTE, text="continued here")  # continuation
+    doc.add_text(label=DocItemLabel.TEXT, text="Next.")
+    doc.add_text(label=DocItemLabel.FOOTNOTE, text="Lone note")
+    assert docling_markdown(doc) == (
+        "Body.\n\nNext.\n\n[^18]: The instructions are long. continued here\n\n[^fn-b]: Lone note"
+    )

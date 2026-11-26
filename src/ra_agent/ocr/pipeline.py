@@ -14,6 +14,7 @@ from .crossref import CrossrefClient, ReferenceCheck, split_references
 from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engines
 from .figures import extract_figures
 from .interpret import describe_figures
+from .repair import repair_merged_rows
 from .refagent import resolve_references
 from .synth import optimize
 from .gate import check_figure_grounding, document_status, has_blockers, run_gate
@@ -118,6 +119,8 @@ class OcrPipeline:
             if stats.text_layer_chars >= 50
             else ""
         )
+        if route is Route.DOCLING:
+            markdown = repair_merged_rows(markdown, text_layer)
         checks = run_gate(
             markdown,
             self.settings.gate,
