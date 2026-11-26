@@ -104,3 +104,19 @@ def test_lookup_falls_back_to_arxiv_title_search():
     meta = synth.PaperMeta(title=RECORD["title"])
     assert synth.lookup(meta, Fake()) == RECORD
     assert synth.lookup(synth.PaperMeta(title="A title nobody published"), Fake()) is None
+
+
+def test_stamp_after_4000_chars_of_text_layer_is_found(tmp_path):
+    import fitz
+
+    pdf = tmp_path / "long.pdf"
+    pdf_doc = fitz.open()
+    page = pdf_doc.new_page()
+    page.insert_textbox((20, 20, 580, 800), "filler words here " * 300, fontsize=6)
+    page.insert_text((20, 830), "arXiv:2504.01848v3  [cs.AI]  7 Apr 2025", fontsize=6)
+    pdf_doc.save(pdf)
+    doc = document("PaperBench: Evaluating AI's Ability to Replicate AI Research")
+    doc.pages[0].markdown = "no stamp"
+    doc.source_pdf = str(pdf)
+    assert len(synth._page_one_text_layer(doc)) > 4000
+    assert synth.draft_meta(doc).arxiv_id == "2504.01848"

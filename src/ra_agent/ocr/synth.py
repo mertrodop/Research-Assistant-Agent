@@ -54,9 +54,9 @@ def _guess_authors(page_one: str, title: str) -> list[str]:
     return names[:40]
 
 
-def _text_layer_head(document: OcrDocument) -> str:
+def _page_one_text_layer(document: OcrDocument) -> str:
     try:
-        return NativeTextEngine().ocr_page(Path(document.source_pdf), 1)[0][:4000]
+        return NativeTextEngine().ocr_page(Path(document.source_pdf), 1)[0]
     except Exception:  # missing or unreadable PDF: no extra evidence, not an error
         return ""
 
@@ -70,7 +70,7 @@ def draft_meta(document: OcrDocument) -> PaperMeta:
     stamp = r"arxiv[:\s/]*(\d{4}\.\d{4,5})"
     arxiv = (
         re.search(stamp, head, re.I)
-        or re.search(stamp, _text_layer_head(document), re.I)
+        or re.search(stamp, _page_one_text_layer(document), re.I)
         or _ARXIV_ID.fullmatch(Path(document.source_pdf).stem)
     )
     doi = _DOI.search(head)
