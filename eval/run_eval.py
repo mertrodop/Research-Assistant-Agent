@@ -4,6 +4,9 @@
     python eval/run_eval.py critic --n 4      # Tier 2 critic, image vs text-only (API key)
     python eval/run_eval.py granite --n 3     # Granite-Docling vs text layer (slow on CPU)
     python eval/run_eval.py document          # references + paper metadata, needs network
+    python eval/run_eval.py ingest            # engines vs text layer, real ingest + UNIT_TESTS
+    python eval/run_eval.py scanned --n 3     # rasterized pages through Granite (very slow on CPU)
+    python eval/run_eval.py figures           # figure models: JSON validity, grounding, latency
     python eval/run_eval.py all
 
 Results land in eval/results/<part>.json. Every part is deterministic and cached,
@@ -23,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "eval"))
 
 from rapidfuzz.distance import Levenshtein  # noqa: E402
 
@@ -382,14 +386,247 @@ def eval_document() -> dict:
     return {"papers": papers}
 
 
+# --- Part 4: ingest, engines and unit tests on real notes ----------------------
+
+STAGING = OUT / "staging"  # separate from the user's staging/
+
+
+def _page_row(pdf: Path, page: int, markdown: str, latency: float, error: str = "") -> dict:
+    text_layer = NativeTextEngine().ocr_page(pdf, page)[0]
+    row = {"pdf": pdf.name, "page": page, "latency_s": latency, "error": error}
+    row.update(text_metrics(markdown, text_layer))
+    row.update(gate_verdict(markdown, pdf, page, text_layer))
+    return row
+
+
+def eval_ingest(n: int) -> dict:
+    from ra_agent.config import load_env_file
+    from ra_agent.ocr.engine import DoclingStandardEngine
+    from ra_agent.tools import Workspace
+    import unit_tests
+    from unit_tests import UNIT_TESTS
+
+    load_env_file(ROOT / ".env")
+    docling, native = DoclingStandardEngine(SETTINGS.engine), NativeTextEngine()
+    granite_cache = CACHE / "granite"
+    rows = []
+    for pdf in sorted(RAW.glob("*.pdf")):
+        sha = pdf_sha256(pdf)[:12]
+        for page in sample_pages(pdf, n):
+            cache = CACHE / "docling" / f"{sha}_p{page:03d}.json"
+            if cache.is_file():
+                data = json.loads(cache.read_text(encoding="utf-8"))
+            else:
+                started = time.perf_counter()
+                markdown, _ = docling.ocr_page(pdf, page, SETTINGS.render.dpi)
+                data = {"markdown": markdown, "latency_s": round(time.perf_counter() - started, 1)}
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            rows.append({"engine": "docling", **_page_row(pdf, page, data["markdown"], data["latency_s"])})
+            gcache = granite_cache / f"{sha}_p{page:03d}_{SETTINGS.render.dpi}.json"
+            if gcache.is_file():  # written by the granite part; never recomputed here
+                g = json.loads(gcache.read_text(encoding="utf-8"))
+                rows.append({"engine": "granite", **_page_row(pdf, page, g["markdown"], g["latency_s"], g["error"])})
+            started = time.perf_counter()
+            text = native.ocr_page(pdf, page)[0]
+            rows.append({"engine": "text_layer", **_page_row(pdf, page, text, round(time.perf_counter() - started, 3))})
+            print(json.dumps(rows[-3:]), flush=True)
+    engines = {}
+    for name in ("docling", "granite", "text_layer"):
+        sel = [r for r in rows if r["engine"] == name]
+        if not sel:
+            continue
+        engines[name] = {
+            "pages": len(sel),
+            "mean_wer": round(sum(r["wer"] for r in sel) / len(sel), 3),
+            "mean_bow_f1": round(sum(r["bow_f1"] for r in sel) / len(sel), 3),
+            "gate_blocked": sum(r["blocked"] for r in sel),
+            "mean_s_per_page": round(sum(r["latency_s"] for r in sel) / len(sel), 2),
+        }
+    # full ingest of both papers with the default routing, into a separate staging dir
+    settings = SETTINGS.model_copy(deep=True)
+    settings.paths.staging_dir = str(STAGING)
+    settings.engine.device = "cpu"  # the 2 GB GPU OOMs on Granite
+    workspace = Workspace(settings)
+    notes, ingest_times = {}, {}
+    for pdf in sorted(RAW.glob("*.pdf")):
+        started = time.perf_counter()
+        result = workspace.ingest_paper(pdf.name)
+        ingest_times[pdf.name] = round(time.perf_counter() - started, 1)
+        if not result["ok"]:
+            raise SystemExit(f"ingest failed: {result['error']}")
+        notes[result["slug"]] = Path(result["handle"])
+    unit_tests.NOTE_DIR = STAGING / "Papers"
+    passed, failed = 0, []
+    for slug, name, check in UNIT_TESTS:
+        path = next((p for s, p in notes.items() if s.startswith(slug)), None)
+        try:
+            ok = path is not None and bool(check(path.read_text(encoding="utf-8")))
+        except Exception:  # noqa: BLE001 - a crashing check is a failed check
+            ok = False
+        passed += ok
+        if not ok:
+            failed.append(f"{slug}:{name}")
+    return {
+        "engines": engines,
+        "unit_tests": {"passed": passed, "total": len(UNIT_TESTS), "failed": failed},
+        "ingest_seconds": ingest_times,
+        "pages": rows,
+    }
+
+
+# --- Part 5: scanned pages, Granite on rasterized copies ----------------------
+
+
+def make_scanned(pdf: Path, out: Path, dpi: int = 150) -> Path:
+    """Image-only copy of `pdf`: every page is a raster, no text layer."""
+    import fitz
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with fitz.open(pdf) as src, fitz.open() as dst:
+        for page in src:
+            pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
+            new = dst.new_page(width=page.rect.width, height=page.rect.height)
+            new.insert_image(new.rect, stream=pix.tobytes("jpeg"))
+        dst.save(out)
+    return out
+
+
+def eval_scanned(n: int, dpi: int = 150) -> dict:
+    from ra_agent.config import load_env_file
+    from ra_agent.llm.client import build_llm
+    from ra_agent.ocr.critic import critique_page
+    from ra_agent.ocr.engine import build_engines
+    from ra_agent.ocr.pipeline import OcrPipeline
+    from ra_agent.ocr.render import render_page
+
+    load_env_file(ROOT / ".env")
+    settings = SETTINGS.model_copy(deep=True)
+    settings.engine.device = "cpu"
+    settings.critic.enabled = False  # the critic is run by hand below, on injected errors
+    settings.pipeline.cache_dir = str(CACHE / "scanned_ocr")
+    client = CachingClient(build_llm(settings.models["vision"]), CACHE / "scanned" / "replies")
+    pipeline = OcrPipeline(settings, engines=build_engines(settings.engine), vision=client)
+    rows = []
+    for pdf in sorted(RAW.glob("*.pdf")):
+        scan = make_scanned(pdf, ROOT / "data" / "eval" / f"{pdf.stem}-scanned.pdf", dpi)
+        sha = pdf_sha256(scan)
+        for page in sample_pages(pdf, n):
+            started = time.perf_counter()
+            result = pipeline.process_page(scan, sha, page, Route.GRANITE)
+            latency = round(time.perf_counter() - started, 1)  # 0-ish when cached by the pipeline
+            reference = NativeTextEngine().ocr_page(pdf, page)[0]
+            row = {"pdf": pdf.name, "page": page, "latency_s": latency, "error": result.error}
+            row.update(text_metrics(result.markdown, reference))
+            row["gate_blocked"] = bool(result.blockers)
+            row["gate_failed"] = [c.name for c in result.checks if not c.passed]
+            image = CACHE / "scanned" / f"{pdf.stem[:12]}_p{page:03d}.png"
+            image.parent.mkdir(parents=True, exist_ok=True)
+            image.write_bytes(render_page(scan, page, settings.critic.dpi).png)
+            critic = {}
+            for variant, operator in {
+                "clean": lambda t, r: t,
+                "hallucinated_sentence": _hallucinated_sentence,
+                "alter_one_number": _alter_one_number,
+            }.items():
+                corrupted = operator(result.markdown, random.Random(0))
+                check = critique_page(corrupted, client, settings.critic, page, image_path=image)
+                critic[variant] = {
+                    "blocked": check.severity.value == "blocker" and not check.passed,
+                    "detail": check.detail[:160],
+                }
+            row["critic_image"] = critic
+            rows.append(row)
+            print(json.dumps(row), flush=True)
+    return {"dpi": dpi, "device": "cpu", "pages": rows}
+
+
+# --- Part 6: figure models ----------------------------------------------------
+
+FIGURE_MODELS = [
+    "qwen/qwen3-vl-8b-instruct",
+    "google/gemma-4-31b-it:free",
+    "google/gemini-2.5-flash",
+]
+
+
+def _figure_cases(per_paper: int = 3) -> list[tuple[str, object, str, Path]]:
+    """Six captioned figures read from the real ingests: (paper, FigureRef, page text, dir)."""
+    from ra_agent.schema import OcrDocument
+
+    cases = []
+    for path in sorted(STAGING.glob("*.json")):
+        doc = OcrDocument.model_validate_json(path.read_text(encoding="utf-8"))
+        figs = [(p, f) for p in doc.pages for f in p.figures if f.caption and f.kind != "page"]
+        for page, fig in figs[:: max(1, len(figs) // per_paper)][:per_paper]:
+            cases.append((path.stem, fig, page.markdown, STAGING / "figures" / doc.sha256[:12]))
+    return cases
+
+
+def eval_figures() -> dict:
+    from ra_agent.config import VisionExtra, load_env_file
+    from ra_agent.llm.client import build_llm
+    from ra_agent.ocr.interpret import _numbers, describe_figure
+
+    load_env_file(ROOT / ".env")
+    cases = _figure_cases()
+    rows = []
+    for model in FIGURE_MODELS:
+        settings = SETTINGS.models["vision"].model_copy(
+            update={"model": model, "base_url": "https://openrouter.ai/api/v1"}
+        )
+        client = CachingClient(build_llm(settings), CACHE / "figures" / "replies")
+        extra = VisionExtra(cache_dir=str(CACHE / "figures" / "readings"))
+        for slug, fig, page_text, image_dir in cases:
+            cache = CACHE / "figures" / "rows" / f"{re.sub(r'[^a-z0-9]+', '_', model)}__{slug[:12]}_{fig.index}.json"
+            if cache.is_file():
+                row = json.loads(cache.read_text(encoding="utf-8"))
+            else:
+                for attempt in range(4):  # free models rate-limit: back off, then record it
+                    started = time.perf_counter()
+                    reading = describe_figure(fig, image_dir, page_text, client, extra, image_dir.name).interpretation
+                    latency = round(time.perf_counter() - started, 1)
+                    if "429" not in reading.error and "HTTP 5" not in reading.error:
+                        break
+                    time.sleep(10 * 2**attempt)
+                reported = _numbers(reading.summary) | _numbers(reading.markdown)
+                row = {
+                    "model": model,
+                    "figure": f"{slug[:12]}:fig-{fig.index}",
+                    "valid_json": not reading.error,
+                    "error": reading.error,
+                    "numbers": len(reported),
+                    "ungrounded": len(reading.ungrounded),
+                    "latency_s": latency,
+                }
+                if row["valid_json"] or "HTTP" not in row["error"]:  # do not freeze rate-limit failures
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    cache.write_text(json.dumps(row), encoding="utf-8")
+            rows.append(row)
+            print(json.dumps(row), flush=True)
+    models = {}
+    for model in FIGURE_MODELS:
+        sel = [r for r in rows if r["model"] == model]
+        numbers = sum(r["numbers"] for r in sel)
+        models[model] = {
+            "figures": len(sel),
+            "valid_json_rate": round(sum(r["valid_json"] for r in sel) / len(sel), 3),
+            "http_failures": sum("HTTP" in r["error"] for r in sel),
+            "grounded_number_rate": round(1 - sum(r["ungrounded"] for r in sel) / numbers, 3) if numbers else None,
+            "numbers_reported": numbers,
+            "mean_latency_s": round(sum(r["latency_s"] for r in sel) / len(sel), 1),
+        }
+    return {"models": models, "rows": rows}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("part", choices=["gate", "critic", "granite", "document", "all"])
+    parser.add_argument("part", choices=["gate", "critic", "granite", "document", "ingest", "scanned", "figures", "all"])
     parser.add_argument("--n", type=int, default=3, help="pages per paper (granite, critic)")
     parser.add_argument("--dpi", type=int, default=SETTINGS.render.dpi)
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    parts = ["gate", "document", "granite"] if args.part == "all" else [args.part]
+    parts = ["gate", "document", "granite", "ingest", "scanned", "figures"] if args.part == "all" else [args.part]
     for part in parts:
         if part == "gate":
             result = eval_gate()
@@ -397,6 +634,12 @@ def main() -> None:
             result = eval_critic(args.n)
         elif part == "granite":
             result = eval_granite(args.n, args.dpi)
+        elif part == "ingest":
+            result = eval_ingest(args.n)
+        elif part == "scanned":
+            result = eval_scanned(args.n)
+        elif part == "figures":
+            result = eval_figures()
         else:
             result = eval_document()
         path = OUT / f"{part}.json"
