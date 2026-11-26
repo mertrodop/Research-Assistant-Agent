@@ -139,3 +139,26 @@ def test_vision_down_keeps_plain_figures_and_ingest_succeeds(tmp_path):
     assert (tmp_path / "figs" / "fig-1.png").is_file()
     assert "![Figure 1: A bar chart of scores.](figures/fig-1.png)" in document.markdown
     assert "> ⚠ description unavailable" in document.markdown
+
+
+def test_granite_retries_on_cpu_after_cuda_oom():
+    from types import SimpleNamespace
+
+    from ra_agent.config import EngineSettings
+    from ra_agent.ocr.engine import GraniteDoclingEngine
+
+    devices = []
+
+    class Engine(GraniteDoclingEngine):
+        def _converter(self, dpi=0):
+            devices.append(self.settings.device)
+            if self.settings.device != "cpu":
+                raise RuntimeError("CUDA out of memory. Tried to allocate 52.00 MiB")
+            doc = SimpleNamespace(export_to_markdown=lambda: "page text", export_to_doctags=lambda: None)
+            return SimpleNamespace(convert=lambda **kw: SimpleNamespace(document=doc, status=None))
+
+    engine = Engine(EngineSettings(device="cuda"))
+    assert engine.ocr_page("x.pdf", 1) == ("page text", None)
+    assert engine.ocr_page("x.pdf", 2)[0] == "page text"
+    assert devices == ["cuda", "cpu", "cpu"]  # one retry, then it stays on CPU
+    assert EngineSettings().device == "cpu"

@@ -149,6 +149,19 @@ class GraniteDoclingEngine:
         self, pdf_path: str | Path, page_no: int, dpi: int = 0
     ) -> tuple[str, str | None]:
         try:
+            return self._ocr_page(pdf_path, page_no, dpi)
+        except OcrEngineError as exc:
+            # a small GPU runs out of memory mid-paper: retry once on CPU, then stay there
+            if "out of memory" not in str(exc).lower() or self.settings.device == "cpu":
+                raise
+            self.settings = self.settings.model_copy(update={"device": "cpu"})
+            self._local = threading.local()
+            return self._ocr_page(pdf_path, page_no, dpi)
+
+    def _ocr_page(
+        self, pdf_path: str | Path, page_no: int, dpi: int = 0
+    ) -> tuple[str, str | None]:
+        try:
             result = self._converter(dpi).convert(
                 source=str(pdf_path),
                 page_range=(page_no, page_no),
@@ -159,7 +172,8 @@ class GraniteDoclingEngine:
         document = result.document
         markdown = html.unescape(document.export_to_markdown() or "").strip()
         if not markdown and result.status is not None and result.status.name != "SUCCESS":
-            raise OcrEngineError(f"docling status {result.status.name}")
+            errors = "; ".join(e.error_message for e in getattr(result, "errors", []) or [])
+            raise OcrEngineError(f"docling status {result.status.name}: {errors}"[:500])
         doctags: str | None = None
         try:
             doctags = document.export_to_doctags()

@@ -21,7 +21,7 @@ class RouterSettings(BaseModel):
 
 class EngineSettings(BaseModel):
     model_id: str = "ibm-granite/granite-docling-258M"
-    device: str = "auto"
+    device: str = "cpu"  # auto OOMs on small GPUs
     page_batch_size: int = 1
 
 

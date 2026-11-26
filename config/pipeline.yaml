@@ -10,7 +10,7 @@ router:
 
 engine:
   model_id: ibm-granite/granite-docling-258M
-  device: auto
+  device: cpu   # auto picks a 2 GB GPU here and runs out of memory
   page_batch_size: 1
 
 gate:
