@@ -19,6 +19,10 @@ def body(text: str) -> str:
     return text.split("\n---\n", 1)[-1]
 
 
+def fm_block(text: str) -> str:
+    return text.split("\n---\n", 1)[0]
+
+
 def first_heading(text: str) -> str:
     return next((l for l in body(text).splitlines() if l.startswith("#")), "")
 
@@ -77,4 +81,8 @@ UNIT_TESTS: list[tuple[str, str, object]] = [
     (PB, "table6_o1_43_4", lambda t: "43.4" in table_after(t, "Table 6.")),
     (PB, "abstract_8316_tasks", lambda t: "8,316" in t.split("## Abstract", 1)[-1][:1500]),
     (PB, "section_2_6_code_dev_heading", lambda t: "## 2.6. PaperBench Code-Dev" in t),
+    (PB, "code_link_preparedness", lambda t: "https://github.com/openai/preparedness" in fm_block(t)),
+    (PB, "table1_has_five_rows", lambda t: len(table_after(t, "Table 1.").splitlines()) >= 7),
+    (PB, "footnote_18_definition", lambda t: "[^18]: The instructions" in t),
+    (CB, "code_link_core_bench", lambda t: "github.com/siegelz/core-bench" in fm_block(t)),
 ]

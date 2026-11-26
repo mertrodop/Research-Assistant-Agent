@@ -208,10 +208,15 @@ def figure_block(figure: FigureRef, rel_dir: str) -> str:
     if reading.error:
         lines.append("> ⚠ description unavailable")
         return "\n".join(lines)
-    lines.append(f"> **{reading.kind}**: {reading.summary}")
+    lines.append(f"> [!figure] {reading.kind}")
+    lines.append(f"> {reading.summary}")
     if reading.markdown:
         lines.append(">")
         lines.extend(f"> {row}".rstrip() for row in reading.markdown.splitlines())
     if reading.ungrounded:
-        lines.append(f"> ⚠ not in page text: {', '.join(reading.ungrounded)}")
+        lines += [
+            "",
+            "> [!warning]- Numbers not found in page text",
+            f"> {', '.join(reading.ungrounded)} — read from the image; check against the figure.",
+        ]
     return "\n".join(lines)

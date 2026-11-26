@@ -124,6 +124,7 @@ class PaperMeta(BaseModel):
     doi: str = ""
     arxiv_id: str = ""
     source: str = ""
+    code: list[str] = Field(default_factory=list)
 
 
 class OcrDocument(BaseModel):
@@ -162,6 +163,7 @@ class NoteFrontmatter(BaseModel):
     figures: int = 0
     figure_files: list[str] = Field(default_factory=list)
     figure_readings: int = 0
+    code: list[str] = Field(default_factory=list)
     authors: list[str] = Field(default_factory=list)
     year: str = ""
     venue: str = ""

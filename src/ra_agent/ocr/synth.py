@@ -24,6 +24,7 @@ from rapidfuzz import fuzz
 
 from ..config import MetaSettings
 from ..schema import CheckResult, OcrDocument, PaperMeta, Severity
+from .codelinks import code_links, code_links_check
 from .crossref import CrossrefClient
 from .engine import NativeTextEngine
 
@@ -75,7 +76,12 @@ def draft_meta(document: OcrDocument) -> PaperMeta:
     )
     doi = _DOI.search(head)
     year = _YEAR.search(head)
+    try:
+        code = code_links(document.source_pdf)
+    except Exception:  # missing or unreadable PDF: no links
+        code = []
     return PaperMeta(
+        code=code,
         title=document.title,
         authors=_guess_authors(page_one, document.title),
         year=year.group(0) if year else "",
@@ -258,6 +264,7 @@ def optimize(
         )
     ]
     checks.append(ocr_pages_check(document))
+    checks.append(code_links_check(meta.code))
     judged = [r for r in document.references if r.status != "skipped"]
     bad = document.unresolved_references
     ratio = len(bad) / len(judged) if judged else 0.0

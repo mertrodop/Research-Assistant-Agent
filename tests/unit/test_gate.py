@@ -199,3 +199,13 @@ def test_doctags_not_applicable_off_granite():
     checks = run_gate(GOOD, GateSettings(), doctags="</page_header>", route=Route.DOCLING)
     check = next(c for c in checks if c.name == "doctags_balance")
     assert check.passed and check.detail == "not applicable"
+
+
+def test_merged_rows_blocker():
+    from ra_agent.ocr.gate import check_table_merged_rows as merged
+
+    bad = "| | Dev | Exec |\n|---|---|---|\n| Docs Source code | ✓ ✓ ✗ | ✓ ✗ |"
+    assert not merged(bad).passed and merged(bad).severity.value == "blocker"
+    good = "| | Dev | Exec |\n|---|---|---|\n| Docs | ✓ | ✗ |\n| Score | 5.0 ± 0.0 | 3 × 4 |"
+    assert merged(good).passed
+    assert merged("no tables here").passed

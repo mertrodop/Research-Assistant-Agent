@@ -212,6 +212,28 @@ def check_table_cells(markdown: str) -> CheckResult:
     return _check("table_cells", True, detail="no repeated rows or empty columns")
 
 
+_MARKS = "✓✗✔✘√×"
+
+
+def check_table_merged_rows(markdown: str) -> CheckResult:
+    """Several table rows collapsed into one: a data cell holds a run of two or more
+    check marks ("✓ ✓ ✓ ✗ ✗"). ponytail: other symbol runs are not detected; a
+    token-count rule also flagged "5.0 ± 0.0" cells on the dev papers."""
+    for block in _table_blocks(markdown):
+        for row in block[1:]:
+            if _is_separator(row):
+                continue
+            cell = next((c for c in _cells(row) if sum(x in _MARKS for x in c.split()) >= 2), None)
+            if cell:
+                return _check(
+                    "table_merged_rows",
+                    False,
+                    detail="several table rows merged into one row",
+                    evidence=cell[:160],
+                )
+    return _check("table_merged_rows", True, detail="no merged rows")
+
+
 _NUMBERED_HEADING = re.compile(r"^\d+(?:\.\d+)*\s+[A-Z].*")
 
 
@@ -407,6 +429,7 @@ def run_gate(
         check_tables(markdown),
         check_table_headers(markdown),
         check_table_cells(markdown),
+        check_table_merged_rows(markdown),
         check_heading_presence(markdown, text_layer),
         check_equations(markdown),
         doctags_check,

@@ -45,7 +45,7 @@ def _frontmatter(document: OcrDocument, slug: str) -> str:
             if figure.interpretation is not None and not figure.interpretation.error
         ),
         **(
-            document.meta.model_dump(include={"authors", "year", "venue", "doi", "arxiv_id"})
+            document.meta.model_dump(include={"authors", "year", "venue", "doi", "arxiv_id", "code"})
             if document.meta
             else {}
         ),

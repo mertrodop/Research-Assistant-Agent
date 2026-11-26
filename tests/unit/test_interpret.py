@@ -152,8 +152,9 @@ def test_figure_block_format():
     )
     assert figure_block(fig, "figs") == (
         "![Figure 1: Replication scores.](figs/fig-1.png)\n\n"
-        "> **chart**: Scores.\n>\n> | a |\n> |---|\n"
-        "> ⚠ not in page text: 12.5, 0.3"
+        "> [!figure] chart\n> Scores.\n>\n> | a |\n> |---|\n\n"
+        "> [!warning]- Numbers not found in page text\n"
+        "> 12.5, 0.3 — read from the image; check against the figure."
     )
 
 

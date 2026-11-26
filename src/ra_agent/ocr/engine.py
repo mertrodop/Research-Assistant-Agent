@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import html
+import re
+import string
 import threading
 from pathlib import Path
 from typing import Protocol
@@ -58,6 +60,24 @@ class NativeTextEngine:
         return "\n".join(out).strip(), None
 
 
+def docling_markdown(document) -> str:
+    """Markdown of a docling document; footnote items move to the end as `[^N]: text`
+    (N is the number the text starts with, else fn-a, fn-b, ...; a digit in the
+    label would count as a number in the gate)."""
+    from docling_core.types.doc import DocItemLabel
+
+    labels = set(DocItemLabel) - {DocItemLabel.FOOTNOTE}
+    markdown = html.unescape(document.export_to_markdown(labels=labels) or "").strip()
+    notes = []
+    for item, _ in document.iterate_items():
+        if item.label is DocItemLabel.FOOTNOTE:
+            text = html.unescape(" ".join(item.text.split()))
+            number = re.match(r"(\d+)\s+(.*)", text)
+            label, text = number.groups() if number else (f"fn-{string.ascii_lowercase[len(notes) % 26]}", text)
+            notes.append(f"[^{label}]: {text}")
+    return "\n\n".join([markdown, *notes]).strip()
+
+
 class DoclingStandardEngine:
     """Docling's standard layout pipeline (clean Markdown, ~1 s/page warm on CPU).
 
@@ -85,7 +105,7 @@ class DoclingStandardEngine:
                 raises_on_error=False,
             )
             document = result.document
-            markdown = html.unescape(document.export_to_markdown() or "").strip()
+            markdown = docling_markdown(document)
             doctags = document.export_to_doctags()
         except Exception as exc:  # noqa: BLE001 - engine failures are data, not crashes
             raise OcrEngineError(f"{type(exc).__name__}: {exc}") from exc
