@@ -13,7 +13,6 @@ from typing import Literal
 from .config import Settings
 from .llm.client import LlmClient, build_llm
 from .ocr.assemble import assemble
-from .ocr.critic import critique_page as _critique
 from .ocr.crossref import split_references
 from .ocr.gate import document_status
 from .ocr.interpret import describe_figure as _describe, figure_block
@@ -33,7 +32,6 @@ TOOL_KINDS: dict[str, Literal["read", "compute", "write"]] = {
     "reprocess_page": "compute",
     "describe_figure": "compute",
     "check_references": "compute",
-    "critique_page": "compute",
     "stage_note": "compute",
     "commit_note": "write",
     "save_procedure": "write",
@@ -289,28 +287,6 @@ class Workspace:
             "counts": counts,
             "unresolved": _data("\n".join(bad[:5])),
             "summary": f"{paper}: {len(checks)} references, {counts}",
-        }
-
-    @_tool
-    def critique_page(self, paper: str, page: int) -> dict:
-        doc = self._doc(paper)
-        found = next((p for p in doc.pages if p.page_no == page), None)
-        if found is None:
-            raise ToolError(f"paper {paper!r} has no page {page}")
-        pdf = Path(doc.source_pdf)
-        check = _critique(
-            found.markdown,
-            self.vision,
-            self.settings.critic,
-            page,
-            image_path=self.pipeline._page_png(pdf, doc.sha256, page),
-            text_layer=self.pipeline._text_layer(pdf, page),
-        )
-        return {
-            "passed": check.passed,
-            "severity": check.severity.value,
-            "detail": _data(check.detail),
-            "summary": f"{paper} page {page} critic: {'passed' if check.passed else 'failed'}",
         }
 
     @_tool

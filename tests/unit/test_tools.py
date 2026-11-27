@@ -60,10 +60,9 @@ def test_describe_figure_without_vision(ws):
     assert not ws.describe_figure(slug, 1)["ok"]  # fixture has no figures
 
 
-def test_check_references_and_critique(ws):
+def test_check_references(ws):
     slug = ws.ingest_paper("paper.pdf")["slug"]
     assert ws.check_references(slug)["ok"]
-    assert ws.critique_page(slug, 1)["ok"]
 
 
 def test_save_procedure(ws, tmp_path):

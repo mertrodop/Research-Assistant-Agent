@@ -85,15 +85,6 @@ class VisionExtra(BaseModel):
     concurrency: int = 2
 
 
-class CriticSettings(BaseModel):
-    """Tier 2 rubric critic. Off by default: it needs an LLM endpoint."""
-
-    enabled: bool = False
-    min_dimension: int = 3
-    min_average: float = 3.5
-    dpi: int = 110  # page image shown to the critic; readable, few tokens
-
-
 class CrossrefSettings(BaseModel):
     enabled: bool = False
     cache_dir: str = ".cache/crossref"
@@ -142,7 +133,6 @@ class Settings(BaseModel):
         default_factory=lambda: {"agent": ModelSettings(), "vision": ModelSettings(), "verifier": VERIFIER}
     )
     vision_extra: VisionExtra = Field(default_factory=VisionExtra)
-    critic: CriticSettings = Field(default_factory=CriticSettings)
     crossref: CrossrefSettings = Field(default_factory=CrossrefSettings)
     references: ReferenceSettings = Field(default_factory=ReferenceSettings)
     meta: MetaSettings = Field(default_factory=MetaSettings)

@@ -1,16 +1,11 @@
 """Evaluate the OCR pipeline on the dev papers in vault/Papers/*/raw/.
 
     python eval/run_eval.py gate              # Tier 1 gate: fault injection, offline
-    python eval/run_eval.py critic --n 4      # Tier 2 critic, image vs text-only (API key)
-    python eval/run_eval.py granite --n 3     # Granite-Docling vs text layer (slow on CPU)
-    python eval/run_eval.py document          # references + paper metadata, needs network
     python eval/run_eval.py ingest            # engines vs text layer, real ingest + UNIT_TESTS
-    python eval/run_eval.py scanned --n 3     # rasterized pages through Granite (very slow on CPU)
-    python eval/run_eval.py figures           # figure models: JSON validity, grounding, latency
     python eval/run_eval.py agent             # agentic behaviour, eval/agent_eval.py (API key)
     python eval/run_eval.py agent --only b    # one scenario: a ablation ... f procedural memory
     python eval/run_eval.py e2e               # `ra ingest` both papers into vault/, commit approved
-    python eval/run_eval.py all
+    python eval/run_eval.py all               # gate + ingest
 
 Results land in eval/results/<part>.json. Every part is deterministic and cached,
 so a rerun costs nothing.
@@ -35,8 +30,7 @@ sys.path.insert(0, str(ROOT / "eval"))
 from rapidfuzz.distance import Levenshtein  # noqa: E402
 
 from ra_agent.config import Settings  # noqa: E402
-from ra_agent.ocr.engine import GraniteDoclingEngine, NativeTextEngine  # noqa: E402
-from ra_agent.schema import Route  # noqa: E402
+from ra_agent.ocr.engine import NativeTextEngine  # noqa: E402
 from ra_agent.ocr.gate import has_blockers, run_gate  # noqa: E402
 from ra_agent.ocr.render import page_count, page_stats, pdf_sha256  # noqa: E402
 
@@ -234,76 +228,6 @@ class CachingClient:
         return self._cached(key, lambda: self.client.describe(image_path, prompt))
 
 
-def eval_critic(n_pages: int) -> dict:
-    from ra_agent.config import load_env_file
-    from ra_agent.llm.client import build_llm
-    from ra_agent.ocr.critic import critique_page
-    from ra_agent.ocr.render import render_page
-
-    load_env_file(ROOT / ".env")
-    settings = SETTINGS.model_copy(deep=True)
-    client = CachingClient(build_llm(settings.models["vision"]), CACHE / "critic" / "replies")
-    native = NativeTextEngine()
-    variants = {
-        "clean": lambda t, r: t,
-        "hallucinated_sentence": _hallucinated_sentence,
-        "alter_one_number": _alter_one_number,
-    }
-    rows = []
-    for pdf in sorted(RAW.glob("*.pdf")):
-        sha = pdf_sha256(pdf)[:12]
-        pages = [p for p in range(2, page_count(pdf) + 1) if len(native.ocr_page(pdf, p)[0]) > 2500]
-        for page in pages[:: max(1, len(pages) // n_pages)][:n_pages]:
-            text, _ = native.ocr_page(pdf, page)
-            image = CACHE / "critic" / f"{sha}_p{page:03d}.png"
-            if not image.is_file():
-                image.parent.mkdir(parents=True, exist_ok=True)
-                image.write_bytes(render_page(pdf, page, settings.critic.dpi).png)
-            for variant, operator in variants.items():
-                corrupted = operator(text, random.Random(0))
-                for mode in MODES:
-                    check = critique_page(
-                        corrupted,
-                        client,
-                        settings.critic,
-                        page,
-                        image_path=image if mode.startswith("image") else None,
-                        text_layer=text if mode == "image+text_layer" else "",
-                    )
-                    result = check.model_dump(mode="json")
-                    gate = gate_verdict(corrupted, pdf, page, text)
-                    marker = INJECTED.get(variant, lambda t, c: "")(text, corrupted)
-                    rows.append(
-                        {
-                            "pdf": pdf.name,
-                            "page": page,
-                            "variant": variant,
-                            "mode": mode,
-                            "critic_blocked": result["severity"] == "blocker" and not result["passed"],
-                            "critic_error": result["severity"] == "warn",
-                            # localized: the critic quoted the injected text, not a lucky miss
-                            "critic_localized": bool(marker) and marker in result["evidence"],
-                            "detail": result["detail"],
-                            "gate_blocked": gate["blocked"],
-                            "gate_flagged": bool(gate["failed"]),
-                        }
-                    )
-                    print(json.dumps(rows[-1]), flush=True)
-    summary = {}
-    for variant in variants:
-        for mode in MODES:
-            sel = [r for r in rows if r["variant"] == variant and r["mode"] == mode]
-            summary[f"{variant}/{mode}"] = {
-                "n": len(sel),
-                "critic_block_rate": round(sum(r["critic_blocked"] for r in sel) / len(sel), 3),
-                "critic_localized_rate": round(sum(r["critic_localized"] for r in sel) / len(sel), 3),
-                "critic_errors": sum(r["critic_error"] for r in sel),
-                "gate_block_rate": round(sum(r["gate_blocked"] for r in sel) / len(sel), 3),
-                "gate_flag_rate": round(sum(r["gate_flagged"] for r in sel) / len(sel), 3),
-            }
-    return {"model": settings.models["vision"].model, "dpi": settings.critic.dpi, "summary": summary, "rows": rows}
-
-
 # --- Part 2: Granite-Docling against the text layer ---------------------------
 
 
@@ -325,74 +249,7 @@ def sample_pages(pdf: Path, n: int) -> list[int]:
     return sorted(chosen[:n])
 
 
-def eval_granite(n: int, dpi: int) -> dict:
-    engine = GraniteDoclingEngine(SETTINGS.engine.model_copy(update={"device": "cpu"}))
-    native = NativeTextEngine()
-    rows = []
-    for pdf in sorted(RAW.glob("*.pdf")):
-        sha = pdf_sha256(pdf)[:12]
-        for page in sample_pages(pdf, n):
-            cache = CACHE / "granite" / f"{sha}_p{page:03d}_{dpi}.json"
-            if cache.is_file():
-                data = json.loads(cache.read_text(encoding="utf-8"))
-            else:
-                started = time.perf_counter()
-                try:
-                    markdown, _ = engine.ocr_page(pdf, page, dpi)
-                    error = ""
-                except Exception as exc:  # noqa: BLE001 - a failed page is a data point
-                    markdown, error = "", str(exc)[:300]
-                data = {
-                    "markdown": markdown,
-                    "error": error,
-                    "latency_s": round(time.perf_counter() - started, 1),
-                }
-                cache.parent.mkdir(parents=True, exist_ok=True)
-                cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            text_layer, _ = native.ocr_page(pdf, page)
-            row = {"pdf": pdf.name, "page": page, "latency_s": data["latency_s"]}
-            row.update(text_metrics(data["markdown"], text_layer))
-            row.update(gate_verdict(data["markdown"], pdf, page, text_layer))
-            row["error"] = data["error"]
-            rows.append(row)
-            print(json.dumps(row), flush=True)
-    return {"dpi": dpi, "device": "cpu", "pages": rows}
-
-
 # --- Part 3: document level, references and paper metadata --------------------
-
-
-def eval_document() -> dict:
-    from ra_agent.ocr.pipeline import OcrPipeline
-
-    settings = Settings.load(ROOT / "config" / "pipeline.yaml")
-    settings.crossref.enabled = True
-    settings.figures.enabled = False
-    pipeline = OcrPipeline(
-        settings=settings,
-        engines={r: NativeTextEngine() for r in Route},  # text layer only, offline
-    )
-    papers = []
-    for pdf in sorted(RAW.glob("*.pdf")):
-        document = pipeline.run(pdf)
-        statuses = Counter(ref.status for ref in document.references)
-        strategies = Counter(
-            ref.strategy for ref in document.references if ref.status == "verified"
-        )
-        papers.append(
-            {
-                "pdf": pdf.name,
-                "status": document.status,
-                "references": len(document.references),
-                "reference_status": dict(statuses),
-                "verified_by_strategy": dict(strategies),
-                "meta": document.meta.model_dump() if document.meta else None,
-                "doc_checks": [c.model_dump(mode="json") for c in document.doc_checks],
-                "optimizer_iterations": document.meta_iterations,
-            }
-        )
-        print(json.dumps(papers[-1], ensure_ascii=False)[:600], flush=True)
-    return {"papers": papers}
 
 
 # --- Part 4: ingest, engines and unit tests on real notes ----------------------
@@ -476,69 +333,6 @@ def eval_ingest(n: int) -> dict:
 # --- Part 5: scanned pages, Granite on rasterized copies ----------------------
 
 
-def make_scanned(pdf: Path, out: Path, dpi: int = 150) -> Path:
-    """Image-only copy of `pdf`: every page is a raster, no text layer."""
-    import fitz
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with fitz.open(pdf) as src, fitz.open() as dst:
-        for page in src:
-            pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
-            new = dst.new_page(width=page.rect.width, height=page.rect.height)
-            new.insert_image(new.rect, stream=pix.tobytes("jpeg"))
-        dst.save(out)
-    return out
-
-
-def eval_scanned(n: int, dpi: int = 150) -> dict:
-    from ra_agent.config import load_env_file
-    from ra_agent.llm.client import build_llm
-    from ra_agent.ocr.critic import critique_page
-    from ra_agent.ocr.engine import build_engines
-    from ra_agent.ocr.pipeline import OcrPipeline
-    from ra_agent.ocr.render import render_page
-
-    load_env_file(ROOT / ".env")
-    settings = SETTINGS.model_copy(deep=True)
-    settings.engine.device = "cpu"
-    settings.critic.enabled = False  # the critic is run by hand below, on injected errors
-    settings.pipeline.cache_dir = str(CACHE / "scanned_ocr")
-    client = CachingClient(build_llm(settings.models["vision"]), CACHE / "scanned" / "replies")
-    pipeline = OcrPipeline(settings, engines=build_engines(settings.engine), vision=client)
-    rows = []
-    for pdf in sorted(RAW.glob("*.pdf")):
-        scan = make_scanned(pdf, DATA / f"{pdf.stem}-scanned.pdf", dpi)
-        sha = pdf_sha256(scan)
-        for page in sample_pages(pdf, n):
-            started = time.perf_counter()
-            result = pipeline.process_page(scan, sha, page, Route.GRANITE)
-            latency = round(time.perf_counter() - started, 1)  # 0-ish when cached by the pipeline
-            reference = NativeTextEngine().ocr_page(pdf, page)[0]
-            row = {"pdf": pdf.name, "page": page, "latency_s": latency, "error": result.error}
-            row.update(text_metrics(result.markdown, reference))
-            row["gate_blocked"] = bool(result.blockers)
-            row["gate_failed"] = [c.name for c in result.checks if not c.passed]
-            image = CACHE / "scanned" / f"{pdf.stem[:12]}_p{page:03d}.png"
-            image.parent.mkdir(parents=True, exist_ok=True)
-            image.write_bytes(render_page(scan, page, settings.critic.dpi).png)
-            critic = {}
-            for variant, operator in {
-                "clean": lambda t, r: t,
-                "hallucinated_sentence": _hallucinated_sentence,
-                "alter_one_number": _alter_one_number,
-            }.items():
-                corrupted = operator(result.markdown, random.Random(0))
-                check = critique_page(corrupted, client, settings.critic, page, image_path=image)
-                critic[variant] = {
-                    "blocked": check.severity.value == "blocker" and not check.passed,
-                    "detail": check.detail[:160],
-                }
-            row["critic_image"] = critic
-            rows.append(row)
-            print(json.dumps(row), flush=True)
-    return {"dpi": dpi, "device": "cpu", "pages": rows}
-
-
 # --- Part 6: figure models ----------------------------------------------------
 
 FIGURE_MODELS = [
@@ -548,97 +342,20 @@ FIGURE_MODELS = [
 ]
 
 
-def _figure_cases(per_paper: int = 3) -> list[tuple[str, object, str, Path]]:
-    """Six captioned figures read from the real ingests: (paper, FigureRef, page text, dir)."""
-    from ra_agent.schema import OcrDocument
-
-    cases = []
-    for path in sorted(STAGING.glob("*.json")):
-        doc = OcrDocument.model_validate_json(path.read_text(encoding="utf-8"))
-        figs = [(p, f) for p in doc.pages for f in p.figures if f.caption and f.kind != "page"]
-        for page, fig in figs[:: max(1, len(figs) // per_paper)][:per_paper]:
-            cases.append((path.stem, fig, page.markdown, STAGING / "figures" / doc.sha256[:12]))
-    return cases
-
-
-def eval_figures() -> dict:
-    from ra_agent.config import VisionExtra, load_env_file
-    from ra_agent.llm.client import build_llm
-    from ra_agent.ocr.interpret import _numbers, describe_figure
-
-    load_env_file(ROOT / ".env")
-    cases = _figure_cases()
-    rows = []
-    for model in FIGURE_MODELS:
-        settings = SETTINGS.models["vision"].model_copy(
-            update={"model": model, "base_url": "https://openrouter.ai/api/v1"}
-        )
-        client = CachingClient(build_llm(settings), CACHE / "figures" / "replies")
-        extra = VisionExtra(cache_dir=str(CACHE / "figures" / "readings"))
-        for slug, fig, page_text, image_dir in cases:
-            cache = CACHE / "figures" / "rows" / f"{re.sub(r'[^a-z0-9]+', '_', model)}__{slug[:12]}_{fig.index}.json"
-            if cache.is_file():
-                row = json.loads(cache.read_text(encoding="utf-8"))
-            else:
-                for attempt in range(4):  # free models rate-limit: back off, then record it
-                    started = time.perf_counter()
-                    reading = describe_figure(fig, image_dir, page_text, client, extra, image_dir.name).interpretation
-                    latency = round(time.perf_counter() - started, 1)
-                    if "429" not in reading.error and "HTTP 5" not in reading.error:
-                        break
-                    time.sleep(10 * 2**attempt)
-                reported = _numbers(reading.summary) | _numbers(reading.markdown)
-                row = {
-                    "model": model,
-                    "figure": f"{slug[:12]}:fig-{fig.index}",
-                    "valid_json": not reading.error,
-                    "error": reading.error,
-                    "numbers": len(reported),
-                    "ungrounded": len(reading.ungrounded),
-                    "latency_s": latency,
-                }
-                if row["valid_json"] or "HTTP" not in row["error"]:  # do not freeze rate-limit failures
-                    cache.parent.mkdir(parents=True, exist_ok=True)
-                    cache.write_text(json.dumps(row), encoding="utf-8")
-            rows.append(row)
-            print(json.dumps(row), flush=True)
-    models = {}
-    for model in FIGURE_MODELS:
-        sel = [r for r in rows if r["model"] == model]
-        numbers = sum(r["numbers"] for r in sel)
-        models[model] = {
-            "figures": len(sel),
-            "valid_json_rate": round(sum(r["valid_json"] for r in sel) / len(sel), 3),
-            "http_failures": sum("HTTP" in r["error"] for r in sel),
-            "grounded_number_rate": round(1 - sum(r["ungrounded"] for r in sel) / numbers, 3) if numbers else None,
-            "numbers_reported": numbers,
-            "mean_latency_s": round(sum(r["latency_s"] for r in sel) / len(sel), 1),
-        }
-    return {"models": models, "rows": rows}
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("part", choices=["gate", "critic", "granite", "document", "ingest", "scanned", "figures", "agent", "e2e", "all"])
-    parser.add_argument("--n", type=int, default=3, help="pages per paper (granite, critic)")
+    parser.add_argument("part", choices=["gate", "ingest", "agent", "e2e", "all"])
+    parser.add_argument("--n", type=int, default=3, help="pages per paper (ingest)")
     parser.add_argument("--dpi", type=int, default=SETTINGS.render.dpi)
     parser.add_argument("--only", default="", help="agent: run one scenario, e.g. b")
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    parts = ["gate", "document", "granite", "ingest", "scanned", "figures"] if args.part == "all" else [args.part]
+    parts = ["gate", "ingest"] if args.part == "all" else [args.part]
     for part in parts:
         if part == "gate":
             result = eval_gate()
-        elif part == "critic":
-            result = eval_critic(args.n)
-        elif part == "granite":
-            result = eval_granite(args.n, args.dpi)
         elif part == "ingest":
             result = eval_ingest(args.n)
-        elif part == "scanned":
-            result = eval_scanned(args.n)
-        elif part == "figures":
-            result = eval_figures()
         elif part == "agent":
             from agent_eval import eval_agent
 
@@ -647,8 +364,6 @@ def main() -> None:
             from agent_eval import eval_end_to_end
 
             result = eval_end_to_end()
-        else:
-            result = eval_document()
         path = OUT / (f"agent_{args.only}.json" if part == "agent" and args.only else f"{part}.json")
         path.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"wrote {path.relative_to(ROOT)}")

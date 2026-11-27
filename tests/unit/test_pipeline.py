@@ -129,7 +129,6 @@ def test_vision_down_keeps_plain_figures_and_ingest_succeeds(tmp_path):
             raise VisionError("endpoint down")
 
     config = settings(tmp_path)
-    config.critic.enabled = False
     config.crossref.enabled = False
     config.vision_extra.cache_dir = str(tmp_path / "vcache")
     pdf = make_pdf_with_figure(tmp_path / "fig.pdf")

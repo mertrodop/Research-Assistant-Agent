@@ -58,12 +58,6 @@ vision_extra:
   concurrency: 2
   cache_dir: .cache/figures
 
-critic:
-  enabled: false
-  min_dimension: 3
-  min_average: 3.5
-  dpi: 110
-
 crossref:
   enabled: false
   cache_dir: .cache/crossref

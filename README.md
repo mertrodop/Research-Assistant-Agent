@@ -49,7 +49,7 @@ The tools are the methods of `Workspace` in `src/ra_agent/tools.py`, served over
 | Kind | Tools | Approval |
 |---|---|---|
 | read | `list_papers`, `vault_search`, `vault_read` | no |
-| compute | `ingest_paper`, `reprocess_page`, `describe_figure`, `check_references`, `critique_page`, `stage_note` | no |
+| compute | `ingest_paper`, `reprocess_page`, `describe_figure`, `check_references`, `stage_note` | no |
 | write | `commit_note`, `save_procedure` | always |
 
 `ingest_paper` runs the OCR pipeline and returns `problems` (page blockers only: a page
@@ -127,12 +127,7 @@ eval/data/    generated eval fixtures: scanned copies, injection PDFs (git-ignor
 
 ```bash
 python eval/run_eval.py gate            # Tier 1 gate fault injection, offline
-python eval/run_eval.py critic --n 4    # rubric critic, needs an API key
-python eval/run_eval.py granite --n 3   # Granite-Docling against the text layer
-python eval/run_eval.py document        # references and metadata, needs network
 python eval/run_eval.py ingest          # engines, full ingest, unit tests on the notes
-python eval/run_eval.py scanned --n 3   # rasterized pages through Granite (slow on CPU)
-python eval/run_eval.py figures         # figure description models
 python eval/run_eval.py agent           # agent behaviour, scenarios a-f (eval/agent_eval.py)
 python eval/run_eval.py agent --only b  # one scenario
 python eval/run_eval.py e2e             # `ra ingest` both papers into vault/, commit approved
@@ -144,8 +139,6 @@ Results land in `eval/results/<part>.json`. Dev set: two 30-page arXiv papers
 | Experiment | Result |
 |---|---|
 | Gate, 59 text pages x 10 injected faults | 8 of 10 fault types blocked on every page; dropped numbers blocked on 8.5% (flagged on all); a hallucinated sentence is never blocked. Clean pages: 0% falsely blocked |
-| Critic (Qwen3-VL-8B, 6 text pages, 3 modes) | hallucinated sentence blocked on at most 1/6 pages, a changed number on at most 1/6; 1/6 clean pages falsely blocked (image or text only), none with image + text layer. The critic does not catch these errors |
-| Critic on scanned pages (Qwen3-VL-8B, 6 pages) | caught the hallucinated sentence on 1 of 6 pages, and blocked the clean version of that page too. Weak |
 | Engines vs text layer (6 pages) | docling WER 0.089, 2.4 s/page; Granite-Docling WER 0.081, 215 s/page on CPU, 2 pages gate-blocked |
 | Scanned pages through Granite | bag-of-words F1 0.94-0.98 on 5 of 6 pages; one page (PaperBench p4) bad and gate-blocked |
 | Figure models (6 figures) | Qwen3-VL-8B and Gemini 2.5 Flash: 6/6 valid JSON, 35% of reported numbers grounded in the page; Gemma free tier: 0/6, rate-limited (HTTP 429) |
@@ -157,6 +150,8 @@ Results land in `eval/results/<part>.json`. Dev set: two 30-page arXiv papers
 | (e) context budget 1500 | completed and committed in 9 steps, 5 tool results evicted |
 | (f) procedural memory | the agent saved a procedure (approved); rerun took 11 steps before and 11 after. No gain |
 | End to end, `ra ingest` both papers | both committed in 4 steps each (ingest, stage, commit); UNIT_TESTS on the vault notes 26/26, the same as the fixed ingest. Checked by eye: section order, headings and the tested tables match the papers; docling's own flaws stay (merged table rows, a footnote inside the PaperBench introduction, a stray "## [...]" heading in a CORE-Bench appendix) |
+
+The scanned-page and figure-model rows were measured with eval parts that were removed later (see git history). The rubric critic was removed too: it blocked at most 1 of 6 injected faults.
 
 Rows (b), (d), (e), (f) were measured before the fixes of the first review round (better-page
 reprocess, warnings apart from problems, a commit ends the run); (a), (c) and the end-to-end
@@ -171,7 +166,7 @@ Weak spots, plainly:
   in 5 runs. That is a small sample from the same scenarios, not a held-out result.
 - The model is not consistent: on the same `Ingest ... into the vault` task it committed in
   (a) and stopped to ask a question in (c).
-- The critic misses most injected errors; the free Gemma model is rate-limited (HTTP 429).
+- The free Gemma model is rate-limited (HTTP 429).
 - The identity check accepted a Crossref match ("Taking Research Notes", 2003) for an
   invented one-page test paper.
 

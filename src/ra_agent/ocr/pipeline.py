@@ -10,7 +10,6 @@ from ..config import Settings
 from ..schema import CheckResult, FigureRef, OcrDocument, PageResult, Route, Severity
 from ..llm.client import LlmClient, NullVisionClient
 from .assemble import assemble
-from .critic import critique_page
 from .crossref import CrossrefClient, ReferenceCheck, split_references
 from .engine import NativeTextEngine, OcrEngine, OcrEngineError, build_engines
 from .figures import extract_figures
@@ -21,7 +20,7 @@ from .vlm import VisionPageEngine
 from .refagent import resolve_references
 from .synth import optimize
 from .gate import check_figure_grounding, document_status, has_blockers, run_gate
-from .render import PageStats, page_count, page_stats, pdf_sha256, render_page
+from .render import PageStats, page_count, page_stats, pdf_sha256
 from .router import choose_route, dpi_for
 
 
@@ -93,14 +92,6 @@ class OcrPipeline:
     def _text_layer(self, pdf_path: Path, page_no: int) -> str:
         text, _ = self._native.ocr_page(pdf_path, page_no)
         return text
-
-    def _page_png(self, pdf_path: Path, sha: str, page_no: int) -> Path:
-        """Page image the critic compares against, cached next to the OCR cache."""
-        path = self.cache.root / sha / f"p{page_no:04d}_critic.png"
-        if not path.is_file():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(render_page(pdf_path, page_no, self.settings.critic.dpi).png)
-        return path
 
     def process_page(
         self,
@@ -176,23 +167,6 @@ class OcrPipeline:
                 ),
             )
         failed = has_blockers(checks)
-        if (
-            not failed
-            and self.settings.critic.enabled
-            and self.vision is not None
-            and markdown.strip()
-        ):
-            checks.append(
-                critique_page(
-                    markdown,
-                    self.vision,
-                    self.settings.critic,
-                    stats.page_no,
-                    image_path=self._page_png(pdf_path, sha, stats.page_no),
-                    text_layer=text_layer,
-                )
-            )
-            failed = has_blockers(checks)
         if cached is None and not failed:
             self.cache.put(sha, stats.page_no, route, dpi, markdown, doctags)
 
