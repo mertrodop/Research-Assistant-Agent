@@ -7,7 +7,6 @@ disk and the result carries a `handle` path instead.
 
 import functools
 import inspect
-import json
 from pathlib import Path
 from typing import Literal
 

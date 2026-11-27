@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ra_agent.ocr.assemble import assemble, dehyphenate, section_tree, strip_margins
+from ra_agent.ocr.assemble import assemble, section_tree, strip_margins
 from ra_agent.schema import FigureInterpretation, FigureRef, PageResult, Route
 
 

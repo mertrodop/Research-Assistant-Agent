@@ -29,10 +29,6 @@ _PREPRINT = re.compile(r"^(arxiv|corr)\b", re.I)
 _JSON = re.compile(r"\{.*\}", re.S)
 
 
-def _norm(text: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
-
-
 def _cached(cache: Path, produce):
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))

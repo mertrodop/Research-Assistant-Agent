@@ -183,21 +183,3 @@ def critique_pages(
             )
         )
     return updated
-
-
-def write_report(checks: list, path: str | Path) -> Path:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = [
-        {
-            "reference": check.reference.raw[:300],
-            "status": check.status,
-            "score": check.score,
-            "matched_title": check.matched_title,
-            "matched_year": check.matched_year,
-            "detail": check.detail,
-        }
-        for check in checks
-    ]
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    return target

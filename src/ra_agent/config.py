@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -16,13 +15,10 @@ class RenderSettings(BaseModel):
 
 class RouterSettings(BaseModel):
     native_text_min_chars: int = 200
-    ink_ratio_vlm: float = 0.02
 
 
 class EngineSettings(BaseModel):
-    model_id: str = "ibm-granite/granite-docling-258M"
     device: str = "cpu"  # auto OOMs on small GPUs
-    page_batch_size: int = 1
 
 
 class GateSettings(BaseModel):
@@ -32,7 +28,6 @@ class GateSettings(BaseModel):
     ngram_size: int = 8
     min_coverage: float = 0.35
     max_coverage: float = 3.0
-    numeric_tolerance: float = 0.0
     sparse_ink: float = 0.02
 
 
@@ -88,7 +83,6 @@ VERIFIER = ModelSettings(model="google/gemini-2.5-flash:online")  # web-searchin
 class VisionExtra(BaseModel):
     cache_dir: str = ".cache/figures"
     concurrency: int = 2
-    max_image_side: int = 1400
 
 
 class CriticSettings(BaseModel):

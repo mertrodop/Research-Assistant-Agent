@@ -6,12 +6,9 @@ render:
 
 router:
   native_text_min_chars: 200
-  ink_ratio_vlm: 0.02
 
 engine:
-  model_id: ibm-granite/granite-docling-258M
   device: cpu   # auto picks a 2 GB GPU here and runs out of memory
-  page_batch_size: 1
 
 gate:
   min_chars: 40
@@ -20,7 +17,6 @@ gate:
   ngram_size: 8
   min_coverage: 0.35
   max_coverage: 3.0
-  numeric_tolerance: 0.0
 
 pipeline:
   concurrency: 2
@@ -61,7 +57,6 @@ models:
 vision_extra:
   concurrency: 2
   cache_dir: .cache/figures
-  max_image_side: 1400
 
 critic:
   enabled: false

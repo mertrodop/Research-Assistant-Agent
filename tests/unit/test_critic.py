@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from ra_agent.config import CriticSettings
 from ra_agent.ocr.critic import critique_page, critique_pages

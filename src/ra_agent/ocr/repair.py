@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 
 from .gate import MARKS, _cells, _is_separator
 
