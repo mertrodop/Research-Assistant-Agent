@@ -1,0 +1,33 @@
+{
+  "code_links": ["file:toyrepo"],
+  "datasets": ["toyA", "toyB"],
+  "claims": [
+    {
+      "claim_id": "toyA_err",
+      "metric": "test_error",
+      "value": 2.0,
+      "unit": "%",
+      "dataset": "toyA",
+      "split": "test",
+      "setting": "SYNTHETIC toy model on toyA",
+      "location": "Table 1 (SYNTHETIC)",
+      "quote": "toyA 2.00 ± 0.10"
+    },
+    {
+      "claim_id": "toyB_err",
+      "metric": "test_error",
+      "value": 5.0,
+      "unit": "%",
+      "dataset": "toyB",
+      "split": "test",
+      "setting": "SYNTHETIC toy model on toyB",
+      "location": "Table 1 (SYNTHETIC)",
+      "quote": "toyB 5.00 ± 0.10"
+    }
+  ],
+  "setup": [
+    {"name": "epochs", "value": "3", "location": "Section 2 (SYNTHETIC)", "quote": "we train for 3 epochs"},
+    {"name": "noise", "value": "0.05 (std of the Gaussian input noise)", "location": "Section 2 (SYNTHETIC)", "quote": "we add Gaussian input noise with a standard deviation of 0.05"},
+    {"name": "eval_checkpoint", "value": null, "location": "-", "quote": ""}
+  ]
+}

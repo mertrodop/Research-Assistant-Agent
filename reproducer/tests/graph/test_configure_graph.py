@@ -11,8 +11,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from reproducer.domain.unknowns import UnknownOpened
 from reproducer.graph.build import build_configure_graph
 from reproducer.providers.git import clone_repo
@@ -175,17 +173,24 @@ def test_llm_error_in_c_is_a_failed_outcome_not_a_crash(tmp_path: Path) -> None:
     assert {"env_spec", "entrypoints"} <= kinds and "workflow" not in kinds
 
 
-def test_commit_mismatch_on_reused_clone_raises_and_writes_nothing(tmp_path: Path) -> None:
-    from reproducer.providers.git import CloneError
-
+def test_commit_mismatch_on_reused_clone_falls_back_and_writes_only_the_fallback(
+    tmp_path: Path,
+) -> None:
     out = make_fixture_repo(tmp_path)
     budget = Budget()
     graph = build_configure_graph(
         {"store": RunStore(out), "llm_for": fake_llm_for(ANSWERS, budget), "budget": budget}
     )
-    with pytest.raises(CloneError, match="not the requested commit"):
-        graph.invoke({"out_dir": str(out), "repo_url": URL, "commit": "b" * 40})
-    assert (out / EVIDENCE_FILE).read_text() == ""
+    final = graph.invoke({"out_dir": str(out), "repo_url": URL, "commit": "b" * 40})
+    assert final["fallback_reason"] == "fallback: configure: CloneError"
+    assert "not the requested commit" in final["fallback_detail"]
+    assert not final.get("outcomes")  # the subtasks were no-ops: no LLM call
+    # nothing but the one fallback record of this invocation (persist -> fallback node)
+    stored = list(RunStore(out).load_evidence().values())
+    assert [ev.kind for ev in stored] == ["fallback"]
+    assert stored[0].content["reason"] == "fallback: configure: CloneError"
+    assert stored[0].content["router_or_node"] == "configure"
+    assert "not the requested commit" in stored[0].content["detail"]
 
 
 # --------------------------------------------------------------------------- spec input

@@ -127,3 +127,34 @@ def test_llm_proposal_requires_llm_inferred(authority: str, confidence: str) -> 
 def test_llm_proposal_llm_inferred_accepted() -> None:
     ev = _ev(kind="llm_proposal", authority="llm", confidence="inferred")
     assert evidence_from_jsonl_line(to_jsonl_line(ev)) == ev
+
+
+def test_lesson_evidence_requires_llm_derived_and_links() -> None:
+    ok = make_evidence(kind="lesson", source="s", locator="lesson:c:trial1", content={},
+                       confidence="derived", authority="llm", links=("a" * 64,))  # fmt: skip
+    assert ok.kind == "lesson"
+    for kw in ({"authority": "rule", "links": ("a" * 64,)},
+               {"authority": "llm", "links": ()}):  # fmt: skip
+        with pytest.raises(ValueError):
+            make_evidence(kind="lesson", source="s", locator="l", content={},
+                          confidence="derived", **kw)  # type: ignore[arg-type]  # fmt: skip
+
+
+def test_lesson_applied_evidence_rules() -> None:
+    lesson_id = "l" * 64
+    ok = make_evidence(
+        kind="lesson_applied",
+        source="s",
+        locator="lesson_applied:c:trial1",
+        content={"lesson_id": lesson_id, "outcome": "applied"},
+        confidence="derived",
+        authority="rule",
+        links=(lesson_id, "p" * 64),
+    )
+    assert ok.links[0] == lesson_id
+    for kw in ({"authority": "llm", "links": (lesson_id,)},  # code applies, never the LLM
+               {"authority": "rule", "links": ()},
+               {"authority": "rule", "links": ("x" * 64, lesson_id)}):  # fmt: skip
+        with pytest.raises(ValueError):
+            make_evidence(kind="lesson_applied", source="s", locator="l",
+                          content={"lesson_id": lesson_id}, confidence="derived", **kw)  # type: ignore[arg-type]  # fmt: skip

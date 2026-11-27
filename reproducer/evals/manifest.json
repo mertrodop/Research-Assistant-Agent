@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "name": "cutout",
+      "spec": "evals/cutout/spec.json",
+      "out": "runs/cutout_e2e",
+      "note": "Cutout (DeVries & Taylor 2017), CIFAR-10/100 ResNet18, full 200-epoch runs"
+    },
+    {
+      "name": "toy_reflexion",
+      "spec": "evals/toy_reflexion/spec.json",
+      "out": "runs/toy_reflexion2",
+      "note": "toy repo exercising the Reflexion loop (lesson -> applied arg change -> rerun)"
+    },
+    {
+      "name": "toy_critic",
+      "spec": "evals/toy_critic/spec.json",
+      "out": "runs/toy_critic",
+      "note": "SYNTHETIC KeyError repo exercising smoke crash -> ReAct critic -> approval gate"
+    },
+    {
+      "name": "mixup",
+      "spec": "evals/mixup/spec.json",
+      "out": "runs/mixup",
+      "note": "placeholder: not run yet"
+    },
+    {
+      "name": "random_erasing",
+      "spec": "evals/random_erasing/spec.json",
+      "out": "runs/random_erasing",
+      "note": "placeholder: not run yet"
+    },
+    {
+      "name": "clip",
+      "spec": "evals/clip/spec.json",
+      "out": "runs/clip",
+      "note": "placeholder: not run yet"
+    }
+  ]
+}

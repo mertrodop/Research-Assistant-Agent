@@ -7,6 +7,13 @@ Safety:
   - The destination must be absent or empty; it is never overwritten.
   - read_text refuses any path that resolves outside the repo (../ or symlink escape).
   - Credentials embedded in URLs are redacted from error messages.
+
+Two ways a repo gets into <out>/repo:
+  - clone_repo: a shallow clone of a GitHub repo (read-only use; nothing from it runs here).
+  - snapshot_local_repo: a local "file:" code link (e.g. the SYNTHETIC toy fixture) copied in
+    and committed as a fresh one-commit repo. This is the ONLY place the tool runs
+    state-changing git (init / add / commit), and only inside <out>/repo: a tool-owned,
+    gitignored folder (runs/), never the project's own repository. Approved (M4-S3 review).
 """
 
 from __future__ import annotations
@@ -93,7 +100,9 @@ def _run_git(
 
 
 def clone_repo(url: str, dest: Path, commit: str | None = None, timeout_s: int = 300) -> str:
-    """Shallow-clone url into dest (optionally at commit). Returns the full HEAD sha."""
+    """Shallow-clone url into dest (optionally at commit). Returns the full HEAD sha. For a
+    local file: code link, configure uses snapshot_local_repo instead (see the module
+    docstring: the tool-owned git init under <out>/repo)."""
     if commit is not None:
         validate_commit(commit)
     dest = Path(dest)
@@ -124,6 +133,47 @@ def clone_repo(url: str, dest: Path, commit: str | None = None, timeout_s: int =
             shutil.rmtree(dest, ignore_errors=True)
             if existed:
                 dest.mkdir(exist_ok=True)
+        raise
+
+
+# Fixed identity + dates: the same files always give the same commit sha.
+SNAPSHOT_ENV = {
+    "GIT_AUTHOR_NAME": "reproducer",
+    "GIT_AUTHOR_EMAIL": "reproducer@localhost",
+    "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+0000",
+    "GIT_COMMITTER_NAME": "reproducer",
+    "GIT_COMMITTER_EMAIL": "reproducer@localhost",
+    "GIT_COMMITTER_DATE": "2000-01-01T00:00:00+0000",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+_SNAPSHOT_IGNORE = shutil.ignore_patterns(".git", "__pycache__", "*.pyc")
+
+
+def snapshot_local_repo(src: Path, dest: Path, timeout_s: int = 60) -> str:
+    """Runs git init / add / commit, but only in dest (<out>/repo: tool-owned, gitignored),
+    never in the project repository (approved; see the module docstring).
+
+    A local source folder (a file: code link, e.g. a SYNTHETIC test fixture) as a fresh
+    one-commit git repo at dest, with a fixed identity and date so the same files always give
+    the same sha. Only dest (absent or empty) is written; src is never modified. Returns the
+    HEAD sha."""
+    src, dest = Path(src).resolve(), Path(dest)
+    if not src.is_dir():
+        raise CloneError(f"local repository {src} is not a directory")
+    if dest.exists() and (not dest.is_dir() or any(dest.iterdir())):
+        raise FileExistsError(f"snapshot destination {dest} exists and is not empty")
+    deadline = time.monotonic() + timeout_s
+    try:
+        shutil.copytree(src, dest, symlinks=True, ignore=_SNAPSHOT_IGNORE, dirs_exist_ok=True)
+        cfg = ["-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"]
+        _run_git([*cfg, "init", "-q"], cwd=dest, deadline=deadline, extra_env=SNAPSHOT_ENV)
+        _run_git(["add", "-A"], cwd=dest, deadline=deadline, extra_env=SNAPSHOT_ENV)
+        _run_git([*cfg, "commit", "-q", "-m", "snapshot"], cwd=dest, deadline=deadline,
+                 extra_env=SNAPSHOT_ENV)  # fmt: skip
+        return _run_git(["rev-parse", "HEAD"], cwd=dest, deadline=deadline)
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)
         raise
 
 

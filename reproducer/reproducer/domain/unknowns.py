@@ -20,6 +20,9 @@ from reproducer.domain.evidence import Evidence, make_evidence
 UNKNOWN_PREFIX = "unk:"
 RESOLVING_CONFIDENCE = frozenset({"observed", "derived"})
 RESOLVING_AUTHORITY = frozenset({"paper", "repo", "execution", "human"})
+# Never resolve, whatever their confidence: llm (proposals) and rule (deterministic code
+# decisions such as env plans; they choose a value to proceed with -> Assumption only).
+NON_RESOLVING_AUTHORITY = frozenset({"llm", "rule"})
 
 
 class _Frozen(BaseModel):
@@ -83,6 +86,11 @@ def event_from_jsonl_line(line: str) -> UnknownOpened | UnknownResolved | Assump
 def _check_resolving_evidence(evidence: Evidence) -> None:
     if evidence.kind == "llm_proposal":
         raise ValueError(f"evidence {evidence.evidence_id}: llm_proposal cannot resolve an unknown")
+    if evidence.authority in NON_RESOLVING_AUTHORITY:
+        raise ValueError(
+            f"evidence {evidence.evidence_id}: {evidence.authority!r} authority cannot resolve "
+            "an unknown (record an Assumption instead)"
+        )
     if evidence.confidence not in RESOLVING_CONFIDENCE:
         raise ValueError(
             f"evidence {evidence.evidence_id} has confidence {evidence.confidence!r}; "
@@ -97,7 +105,7 @@ def _check_resolving_evidence(evidence: Evidence) -> None:
 
 def resolve(opened: UnknownOpened, evidence: Evidence, value: str) -> UnknownResolved:
     """Resolve an Unknown; raises ValueError unless the evidence is observed/derived and
-    comes from paper/repo/execution/human."""
+    comes from paper/repo/execution/human (llm and rule authority never resolve)."""
     _check_resolving_evidence(evidence)
     return UnknownResolved(
         unknown_id=opened.unknown_id, value=value, evidence_id=evidence.evidence_id

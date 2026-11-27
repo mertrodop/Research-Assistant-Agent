@@ -179,7 +179,6 @@ def test_repo_source_dotted_name() -> None:
     "url",
     [
         "https://gitlab.com/openai/CLIP",
-        "file:///tmp/repo",
         "https://github.com/openai",
         "https://github.com/openai/CLIP/tree/main",
         "",
@@ -188,3 +187,8 @@ def test_repo_source_dotted_name() -> None:
 def test_repo_source_non_github_raises(url: str) -> None:
     with pytest.raises(ValueError):
         repo_source(url, SHA)
+
+
+def test_repo_source_of_a_local_snapshot() -> None:
+    # file: code links (SYNTHETIC local fixtures) are snapshotted, never cloned from GitHub
+    assert repo_source("file:///tmp/toyrepo", SHA) == f"repo:local/toyrepo@{SHA}"

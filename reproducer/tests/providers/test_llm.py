@@ -25,6 +25,7 @@ from reproducer.providers.llm import (
     LLMResponse,
     MeteredLLM,
     OllamaLLM,
+    OllamaOpenAILLM,
     OpenAICompatLLM,
     llm_for_node,
     make_llm,
@@ -438,7 +439,9 @@ def test_metered_records_hash_only() -> None:
         "output_tokens",
         "latency_s",
         "prompt_sha256",
+        "evicted",
     }
+    assert rec.evicted == ()
 
 
 def test_metered_records_returns_copy() -> None:
@@ -499,13 +502,95 @@ def test_parse_spec_rejects(bad: str) -> None:
 
 def test_make_llm_ollama_defaults_and_env() -> None:
     d = make_llm("ollama:qwen2.5-coder:7b", {})
-    assert isinstance(d, OllamaLLM)
+    assert isinstance(d, OllamaOpenAILLM)  # default: the OpenAI-compatible API
     assert (d.host, d.model, d.num_ctx) == ("http://localhost:11434", "qwen2.5-coder:7b", 8192)
+    assert (d.base_url, d.backend, d.json_mode) == ("http://localhost:11434/v1", "ollama", "schema")
     c = make_llm("ollama:m", {"OLLAMA_HOST": "gpu-box:11434", "OLLAMA_NUM_CTX": "4096"})
-    assert isinstance(c, OllamaLLM)
-    assert (c.host, c.num_ctx) == ("http://gpu-box:11434", 4096)
+    assert isinstance(c, OllamaOpenAILLM)
+    assert (c.host, c.num_ctx, c.base_url) == (
+        "http://gpu-box:11434",
+        4096,
+        "http://gpu-box:11434/v1",
+    )
     with pytest.raises(ValueError, match="OLLAMA_NUM_CTX"):
         make_llm("ollama:m", {"OLLAMA_NUM_CTX": "big"})
+
+
+def test_make_llm_ollama_native_fallback() -> None:
+    n = make_llm("ollama:m", {"REPRODUCER_OLLAMA_API": "native", "OLLAMA_NUM_CTX": "4096"})
+    assert isinstance(n, OllamaLLM)
+    assert (n.host, n.num_ctx) == ("http://localhost:11434", 4096)
+    assert isinstance(make_llm("ollama:m", {"REPRODUCER_OLLAMA_API": "openai"}), OllamaOpenAILLM)
+    with pytest.raises(ValueError, match="REPRODUCER_OLLAMA_API"):
+        make_llm("ollama:m", {"REPRODUCER_OLLAMA_API": "grpc"})
+    with pytest.raises(ValueError, match="OLLAMA_JSON_MODE"):
+        make_llm("ollama:m", {"OLLAMA_JSON_MODE": "xml"})
+
+
+def test_ollama_openai_request_and_guard(stub: Stub) -> None:
+    stub.add("POST", "/v1/chat/completions", 200, _openai_ok())
+    client = make_llm("ollama:m", {"OLLAMA_HOST": stub.url, "OLLAMA_NUM_CTX": "4096"})
+    resp = client.complete("sys", "hello", max_tokens=16, json_schema=SCHEMA)
+    assert (resp.backend, resp.model) == ("ollama", "m")  # local tokens in telemetry
+    (req,) = stub.posts("/v1/chat/completions")
+    assert "authorization" not in req["headers"]
+    assert req["json"]["max_tokens"] == 16
+    assert req["json"]["response_format"]["type"] == "json_schema"
+    with pytest.raises(ContextTooLong, match="OLLAMA_NUM_CTX"):
+        client.complete("s", "x" * 20_000, max_tokens=8)
+    assert len(stub.posts("/v1/chat/completions")) == 1  # the guard made no request
+
+
+def _ps(model: str, ctx: int) -> dict[str, Any]:  # GET /api/ps shape of Ollama 0.18.0
+    return {"models": [{"name": model, "model": model, "size_vram": 1, "context_length": ctx}]}
+
+
+def test_ollama_server_context_lower_than_num_ctx_wins(stub: Stub, capsys: Any) -> None:
+    stub.add("GET", "/api/ps", 200, _ps("m", 4096))
+    for _ in range(2):
+        stub.add("POST", "/v1/chat/completions", 200, _openai_ok())
+    client = make_llm("ollama:m", {"OLLAMA_HOST": stub.url, "OLLAMA_NUM_CTX": "8192"})
+    client.complete("s", "hello", max_tokens=8)
+    assert client.num_ctx == 4096  # type: ignore[attr-defined]
+    err = capsys.readouterr().err
+    assert err.count("warning: ollama server context_length 4096 < OLLAMA_NUM_CTX 8192") == 1
+    with pytest.raises(ContextTooLong, match="num_ctx 4096"):  # ~6000 tokens: fits 8192 only
+        client.complete("s", "x" * 20_000, max_tokens=8)
+    # a second client for the same model: cached, no new probe, no second warning
+    other = make_llm("ollama:m", {"OLLAMA_HOST": stub.url, "OLLAMA_NUM_CTX": "8192"})
+    other.complete("s", "hello", max_tokens=8)
+    assert other.num_ctx == 4096  # type: ignore[attr-defined]
+    assert len([r for r in stub.requests if r["path"] == "/api/ps"]) == 1
+    assert "warning" not in capsys.readouterr().err
+
+
+def test_ollama_server_context_probed_after_load_and_higher_is_ignored(
+    stub: Stub, capsys: Any
+) -> None:
+    stub.add("GET", "/api/ps", 200, {"models": []})  # not loaded before the first call
+    stub.add("GET", "/api/ps", 200, _ps("m", 32768))  # loaded after it
+    stub.add("POST", "/v1/chat/completions", 200, _openai_ok())
+    client = make_llm("ollama:m", {"OLLAMA_HOST": stub.url, "OLLAMA_NUM_CTX": "8192"})
+    client.complete("s", "hello", max_tokens=8)
+    assert client.num_ctx == 8192  # type: ignore[attr-defined]
+    assert len([r for r in stub.requests if r["path"] == "/api/ps"]) == 2
+    assert "warning" not in capsys.readouterr().err
+
+
+def test_ollama_ps_unavailable_keeps_num_ctx(stub: Stub) -> None:
+    stub.add("POST", "/v1/chat/completions", 200, _openai_ok())  # /api/ps -> 404
+    client = make_llm("ollama:m", {"OLLAMA_HOST": stub.url, "OLLAMA_NUM_CTX": "8192"})
+    client.complete("s", "hello", max_tokens=8)
+    assert client.num_ctx == 8192  # type: ignore[attr-defined]
+
+
+def test_ollama_openai_unload_uses_native_endpoint(stub: Stub) -> None:
+    stub.add("POST", "/api/chat", 200, {"done_reason": "unload"})
+    client = make_llm("ollama:m", {"OLLAMA_HOST": stub.url})
+    assert isinstance(client, OllamaOpenAILLM)
+    assert client.unload() is True
+    (req,) = stub.posts("/api/chat")
+    assert req["json"] == {"model": "m", "messages": [], "keep_alive": 0, "stream": False}
 
 
 def test_make_llm_openai_and_fake() -> None:
@@ -557,7 +642,7 @@ def test_llm_for_node_override_and_shared_budget() -> None:
     subtasks = llm_for_node("subtasks", budget, env)
     assert isinstance(critic.inner, OpenAICompatLLM)
     assert critic.inner.model == "gpt-4o-mini"
-    assert isinstance(subtasks.inner, OllamaLLM)
+    assert isinstance(subtasks.inner, OllamaOpenAILLM)
     assert subtasks.inner.model == "qwen2.5-coder:7b"
     assert critic.budget is subtasks.budget is budget
     assert (critic.node, subtasks.node) == ("critic", "subtasks")
@@ -646,7 +731,7 @@ def test_llm_for_node_ollama_default_openrouter_critic() -> None:
     assert isinstance(critic.inner, OpenAICompatLLM)
     assert (critic.inner.backend, critic.inner.model) == ("openrouter", OR_MODEL)
     assert critic.inner.base_url == "https://openrouter.ai/api/v1"
-    assert isinstance(reflect.inner, OllamaLLM)
+    assert isinstance(reflect.inner, OllamaOpenAILLM)
     assert reflect.inner.model == "qwen2.5-coder:7b"
 
 
@@ -752,6 +837,21 @@ def test_live_ollama_openai_compat_schema() -> None:
     client = make_llm(f"openai:{LIVE_MODEL}", env)
     resp = client.complete(LIVE_SYSTEM, LIVE_PROMPT, max_tokens=64, json_schema=SCHEMA)
     _check_schema_json(resp, "ollama-openai-compat")
+
+
+@pytest.mark.llm_live
+def test_live_ollama_default_openai_api_schema_and_unload() -> None:
+    """The default 'ollama:' backend: OpenAI-compatible /v1 (telemetry backend ollama), with
+    the client-side guard; unload on the native endpoint."""
+    _require_local_model()
+    client = make_llm(f"ollama:{LIVE_MODEL}", {"OLLAMA_HOST": LIVE_HOST})
+    assert isinstance(client, OllamaOpenAILLM)
+    resp = client.complete(LIVE_SYSTEM, LIVE_PROMPT, max_tokens=64, json_schema=SCHEMA)
+    _check_schema_json(resp, "ollama-default-openai-api")
+    assert resp.backend == "ollama"
+    with pytest.raises(ContextTooLong):  # 8192 default: refused before any request
+        client.complete(LIVE_SYSTEM, "word " * 8000, max_tokens=64)
+    assert client.unload() is True
 
 
 @pytest.mark.llm_live

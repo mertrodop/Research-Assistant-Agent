@@ -257,3 +257,25 @@ def test_network_clone_clip(tmp_path: Path) -> None:
     assert inv.requirement_files
     text, _ = read_text(dest, inv.readme)
     assert "CLIP" in text
+
+
+def test_snapshot_local_repo_is_deterministic(tmp_path: Path) -> None:
+    from reproducer.providers.git import snapshot_local_repo
+
+    src = tmp_path / "src"
+    (src / "pkg").mkdir(parents=True)
+    (src / "train.py").write_text("print('x')\n")
+    (src / "pkg" / "m.py").write_text("X = 1\n")
+    (src / "__pycache__").mkdir()
+    (src / "__pycache__" / "junk.pyc").write_bytes(b"\0")
+    a = snapshot_local_repo(src, tmp_path / "a")
+    b = snapshot_local_repo(src, tmp_path / "b")
+    assert a == b and len(a) == 40  # same files -> same sha
+    assert not (tmp_path / "a" / "__pycache__").exists()
+    assert sorted(p.name for p in src.iterdir()) == [
+        "__pycache__",
+        "pkg",
+        "train.py",
+    ]  # src untouched
+    with pytest.raises(FileExistsError):
+        snapshot_local_repo(src, tmp_path / "a")

@@ -24,12 +24,50 @@ EvidenceKind = Literal[
     "smoke_result",
     "run_result",
     "critic_patch",
-    "lesson",
+    "lesson",  # a validated Reflexion lesson (graph/nodes/reflect.py; authority llm,
+    # derived): content {claim_id, trial, input_digest, run_evidence_id, lesson}; links: the
+    # evidence it cites. Keyed by (claim, trial, input_digest); others of the trial are stale
     "human_input",
     "llm_proposal",
+    "dataset_cache",  # a dataset verified in the shared cache (authority execution, observed)
+    "known_fix",  # a zero-token rule fix (authority rule, derived; links: the smoke evidence)
+    "critic_revert",  # a critic patch that left the error signature unchanged, dropped from
+    # the patch stack (authority rule, derived; links: the critic_patch + the new smoke)
+    "tolerance",  # a pre-registered claim tolerance, written before any run (authority rule,
+    # derived; links: the paper_claim evidence)
+    "claim_mapping",  # the orchestrator's validated claim -> repo mapping (authority llm,
+    # derived; links: every evidence it cites)
+    "run_plan",  # a RunPlan built by code from the claim mapping (authority rule, derived;
+    # content: plan + rendered command + notes; links: claim_mapping, paper_claim, tolerance)
+    "preflight",  # the go / no-go before a full run (authority execution, observed): plan
+    # digest, smoke timing, GPU-hour estimate, caps, decision; links: run_plan + smoke_result
+    "setup_failed",  # a full run that failed before its container started (workdir copy,
+    # patch, image check, ...): authority execution, observed; NOT a run attempt, no GPU
+    # hours; links: run_plan + preflight
+    "approval_request",  # a gated action waiting for a human (authority rule, derived): content
+    # {action, subject, cost, detail, input_digest}; links: the triggering evidence
+    "approval_decision",  # a human's answer to an approval_request (authority human,
+    # observed): content {request_id, decision: approved|rejected, note}; links: the request
+    "lesson_applied",  # code applying (or stopping on) one validated, current lesson
+    # (graph/nodes/apply_lesson.py; authority rule, derived): content {claim_id, trial,
+    # lesson_id, kind, target, new_value, support_evidence_id, outcome: applied | resolved |
+    # reeval | stopped_no_change, detail}; links: the lesson (+ its support evidence). Plans
+    # fold the applied arg / eval_protocol changes; the lesson ids enter the plan digest
+    "critic_trace",  # the ReAct critic's trajectory (graph/nodes/critic_react.py; authority
+    # llm, derived): content {file, error_signature, status, mode, steps: [{step, tool, args,
+    # result_chars, truncated, ok, note}], outcome, fallback_reason, fallback_status,
+    # llm_calls, tokens, thoughts}; links: the smoke evidence. Additive: never folded
+    "run_curve",  # a run's training curve projected by code (domain/curve.py; authority
+    # rule, derived): content {claim_id, run_evidence_id, run_id, summary[, partial: true for
+    # a crashed / diverged run]}; links: the run_result. One per run (idempotent by run id)
+    "fallback",  # a graph invocation that took the default fallback route (graph/build.py
+    # fallback_node; authority rule, derived): content {router_or_node, reason, detail};
+    # locator fallback:<invocation stamp>. One per invocation; claims stay open
 ]
 Confidence = Literal["observed", "derived", "inferred"]
-Authority = Literal["paper", "repo", "execution", "llm", "human"]
+# "rule": a deterministic code decision (env plan, known fix). Like "llm", it never resolves
+# an Unknown: a rule picks a value to proceed with, it does not observe the paper or repo.
+Authority = Literal["paper", "repo", "execution", "llm", "human", "rule"]
 
 
 class _Frozen(BaseModel):
@@ -79,6 +117,111 @@ class Evidence(_Frozen):
             raise ValueError(
                 "llm_proposal evidence requires authority='llm' and confidence='inferred', "
                 f"got authority={self.authority!r}, confidence={self.confidence!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_tolerance(self) -> Self:
+        if self.kind == "tolerance" and (
+            self.authority != "rule" or self.confidence != "derived" or not self.links
+        ):
+            raise ValueError(
+                "tolerance evidence requires authority='rule', confidence='derived' and a link "
+                f"to the paper_claim, got authority={self.authority!r}, "
+                f"confidence={self.confidence!r}, links={list(self.links)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_plan_kinds(self) -> Self:
+        required = {"claim_mapping": "llm", "run_plan": "rule", "lesson": "llm"}.get(self.kind)
+        if required is not None and (
+            self.authority != required or self.confidence != "derived" or not self.links
+        ):
+            raise ValueError(
+                f"{self.kind} evidence requires authority={required!r}, confidence='derived' "
+                f"and links, got authority={self.authority!r}, confidence={self.confidence!r}, "
+                f"links={list(self.links)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_lesson_applied(self) -> Self:
+        if self.kind == "lesson_applied" and (
+            self.authority != "rule"
+            or self.confidence != "derived"
+            or not self.links
+            or self.links[0] != self.content.get("lesson_id")
+        ):
+            raise ValueError(
+                "lesson_applied evidence requires authority='rule', confidence='derived' and "
+                f"links starting with the lesson_id, got authority={self.authority!r}, "
+                f"confidence={self.confidence!r}, links={list(self.links)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_run_curve(self) -> Self:
+        if self.kind == "run_curve" and (
+            self.authority != "rule"
+            or self.confidence != "derived"
+            or self.links != (self.content.get("run_evidence_id"),)
+        ):
+            raise ValueError(
+                "run_curve evidence requires authority='rule', confidence='derived' and links "
+                f"== (run_evidence_id,), got authority={self.authority!r}, "
+                f"confidence={self.confidence!r}, links={list(self.links)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_preflight(self) -> Self:
+        if self.kind == "preflight" and (
+            self.authority != "execution" or self.confidence != "observed"
+        ):
+            raise ValueError(
+                "preflight evidence requires authority='execution' and confidence='observed', "
+                f"got authority={self.authority!r}, confidence={self.confidence!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_approval(self) -> Self:
+        if self.kind == "approval_request" and (
+            self.authority != "rule" or self.confidence != "derived" or not self.links
+        ):
+            raise ValueError(
+                "approval_request evidence requires authority='rule', confidence='derived' and "
+                f"a link to the triggering evidence, got authority={self.authority!r}, "
+                f"confidence={self.confidence!r}, links={list(self.links)}"
+            )
+        if self.kind == "approval_decision":
+            # only a human approves: never llm / rule / execution authority
+            if self.authority != "human" or self.confidence != "observed":
+                raise ValueError(
+                    "approval_decision evidence requires authority='human' and "
+                    f"confidence='observed', got authority={self.authority!r}, "
+                    f"confidence={self.confidence!r}"
+                )
+            rid = self.content.get("request_id")
+            if self.content.get("decision") not in ("approved", "rejected") or self.links != (rid,):
+                raise ValueError(
+                    "approval_decision needs decision approved|rejected and links == "
+                    f"(request_id,), got {self.content.get('decision')!r}, {list(self.links)}"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _check_fallback(self) -> Self:
+        if self.kind == "fallback" and (
+            self.authority != "rule"
+            or self.confidence != "derived"
+            or set(self.content) != {"router_or_node", "reason", "detail"}
+        ):
+            raise ValueError(
+                "fallback evidence requires authority='rule', confidence='derived' and content "
+                f"{{router_or_node, reason, detail}}, got authority={self.authority!r}, "
+                f"confidence={self.confidence!r}, keys={sorted(self.content)}"
             )
         return self
 

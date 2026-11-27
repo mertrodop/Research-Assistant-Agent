@@ -13,6 +13,7 @@ import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from reproducer.domain.evidence import Evidence, make_evidence
 from reproducer.domain.inventory import FileInfo, RepoInventory
@@ -126,9 +127,27 @@ def parse_github_url(url: str) -> tuple[str, str]:
     return m.group("owner"), m.group("name")
 
 
+LOCAL_OWNER = "local"  # source owner of a local (file:) repository snapshot
+
+
+def local_repo_path(url: str) -> Path | None:
+    """'file:///abs/dir' -> Path('/abs/dir'); None for any other URL."""
+    u = url.strip()
+    return Path(unquote(urlsplit(u).path)) if u.startswith("file://") else None
+
+
+def parse_repo_url(url: str) -> tuple[str, str]:
+    """GitHub URL -> (owner, name); 'file:///.../<name>' -> ('local', name)."""
+    path = local_repo_path(url)
+    if path is not None:
+        return LOCAL_OWNER, path.name
+    return parse_github_url(url)
+
+
 def repo_source(url: str, sha: str) -> str:
-    """'https://github.com/openai/CLIP.git' + sha -> 'repo:openai/CLIP@<sha>'."""
-    owner, name = parse_github_url(url)
+    """'https://github.com/openai/CLIP.git' + sha -> 'repo:openai/CLIP@<sha>';
+    'file:///x/toyrepo' + sha -> 'repo:local/toyrepo@<sha>'."""
+    owner, name = parse_repo_url(url)
     return f"repo:{owner}/{name}@{sha}"
 
 
@@ -153,11 +172,12 @@ def configure(state: Mapping[str, Any], deps: Mapping[str, Any]) -> dict[str, An
         head_sha,
         list_files,
         read_text,
+        snapshot_local_repo,
         validate_commit,
     )
 
     url, commit = state["repo_url"], state.get("commit")
-    parse_github_url(url)
+    parse_repo_url(url)
     if commit is not None:
         validate_commit(commit)
     repo_dir = Path(state["out_dir"]) / "repo"
@@ -167,6 +187,10 @@ def configure(state: Mapping[str, Any], deps: Mapping[str, Any]) -> dict[str, An
             raise CloneError(
                 f"{repo_dir} is at {sha}, not the requested commit {commit}; use a fresh --out"
             )
+    elif (local := local_repo_path(url)) is not None:
+        if commit is not None:
+            raise ValueError("--commit does not apply to a local (file:) repository snapshot")
+        sha = snapshot_local_repo(local, repo_dir)
     else:
         sha = clone_repo(url, repo_dir, commit=commit)
     source = repo_source(url, sha)

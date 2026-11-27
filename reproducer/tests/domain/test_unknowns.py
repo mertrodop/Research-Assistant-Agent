@@ -233,6 +233,41 @@ def test_fold_rechecks_resolution_policy(opened: UnknownOpened, index: dict[str,
         fold_unknowns([opened, forged], index)
 
 
+def _rule_ev() -> Evidence:
+    return make_evidence(
+        kind="env_spec",
+        source="example-lab/resnet18@abc123",
+        locator="env_plan",
+        content={"weight_decay": "5e-4"},
+        confidence="derived",
+        authority="rule",
+    )
+
+
+def test_resolve_rejects_rule_authority(opened: UnknownOpened) -> None:
+    # Derived confidence is not enough: a rule decision never resolves an unknown.
+    with pytest.raises(ValueError, match="'rule' authority cannot resolve"):
+        resolve(opened, _rule_ev(), "5e-4")
+
+
+def test_fold_rejects_rule_resolution(opened: UnknownOpened, index: dict[str, Evidence]) -> None:
+    rule = _rule_ev()
+    forged = UnknownResolved(
+        unknown_id=opened.unknown_id, value="5e-4", evidence_id=rule.evidence_id
+    )
+    with pytest.raises(ValueError, match="'rule' authority cannot resolve"):
+        fold_unknowns([opened, forged], {**index, rule.evidence_id: rule})
+
+
+def test_rule_evidence_may_back_an_assumption(
+    opened: UnknownOpened, index: dict[str, Evidence]
+) -> None:
+    rule = _rule_ev()
+    assumed = Assumption(unknown_id=opened.unknown_id, value="5e-4", evidence_id=rule.evidence_id)
+    state = fold_unknowns([opened, assumed], {**index, rule.evidence_id: rule})[opened.unknown_id]
+    assert state.status == "open" and state.assumptions == (assumed,)
+
+
 def test_fold_rejects_llm_proposal_resolution(
     opened: UnknownOpened, index: dict[str, Evidence]
 ) -> None:

@@ -20,10 +20,13 @@ from reproducer.graph.nodes.subtasks import (
     find_version_mentions,
     load_repo_facts,
     metric_line_evidence,
+    pack_context,
+    pack_context_report,
     run_subtask,
+    subtask_sections,
     version_evidence,
 )
-from reproducer.providers.llm import FakeLLM
+from reproducer.providers.llm import Budget, ContextTooLong, FakeLLM, LLMError, MeteredLLM
 
 SRC = "repo:org/proj@" + "a" * 40
 README = """# Cutout
@@ -244,6 +247,7 @@ def test_subtask_a_ok_evidence_and_unknowns(ctx: Ctx) -> None:
         "llm",
     )
     assert ev.source == SRC and ev.links == (readme_id,)
+    assert ev.content["gate_attempts"] == 1  # additive node metadata
     pkg = ev.content["packages"][0]
     assert pkg["source"] == "readme"
     assert pkg["citation"] == {"evidence_id": readme_id, "quote": "PyTorch v0.4.0"}  # verbatim
@@ -267,6 +271,7 @@ def test_subtask_a_feedback_has_example_shape(ctx: Ctx) -> None:
         max_tokens=500,
     )
     assert out.ok and out.attempts == 2
+    assert out.evidence[0].content["gate_attempts"] == 2
     retry_prompt = llm.prompts[1][1]
     assert "packages.0.citation.quote: Field required" in retry_prompt
     assert 'e.g. citation: {"evidence_id": "E1", "quote": "<copy exact text>"}' in retry_prompt
@@ -303,6 +308,7 @@ def test_subtask_b_retries_on_duplicates_and_invented_arg(ctx: Ctx) -> None:
     }
     out = _run("B", [json.dumps(d) for d in (dup, bad_arg, good)], context, packed["B"])
     assert out.ok and out.attempts == 3
+    assert out.evidence[0].content["gate_attempts"] == 3
     assert "duplicate entrypoint path" in out.errors[0]
     assert "args_used is derived from the example command (['--dataset'])" in out.errors[1]
     assert out.value.entrypoints[0].args_used == ("--dataset", "--model", "--cutout")
@@ -623,3 +629,61 @@ def test_command_evidence_derived_and_linked() -> None:
             "source": "README.md",
         }
     ]
+
+
+# --------------------------------------------------------------------------- context eviction
+
+A_ANSWER = json.dumps(
+    {
+        "python": None,
+        "packages": [
+            {"name": "torch", "version": "v0.4.0",
+             "citation": {"evidence_id": "E1", "quote": "pytorch v0.4.0"}}
+        ],
+        "gpu_required": None,
+        "unknowns": [{"name": "python_version", "why": "not stated"}],
+    }
+)  # fmt: skip
+
+
+def _limited(limit: int, *, provider: bool = False) -> FakeLLM:
+    def answer(system: str, prompt: str) -> str:
+        if len(prompt) > limit:
+            if provider:
+                raise LLMError("x", status=400, body="maximum context length is 8192 tokens")
+            raise ContextTooLong(f"{len(prompt)} > {limit}")
+        return A_ANSWER
+
+    return FakeLLM(answer)
+
+
+def test_build_subtask_context_is_subtask_sections_packed(ctx: Ctx) -> None:
+    evidence, _, packed = ctx
+    facts, scan = load_repo_facts(evidence)
+    _, sections = subtask_sections(evidence, facts, scan)
+    assert {k: pack_context(v, 12_000) for k, v in sections.items()} == packed
+
+
+@pytest.mark.parametrize("provider", [False, True])
+def test_subtask_oversized_context_is_evicted_and_recorded(ctx: Ctx, provider: bool) -> None:
+    evidence, context, _ = ctx
+    facts, scan = load_repo_facts(evidence)
+    _, sections = subtask_sections(evidence, facts, scan)
+    base = len(pack_context(sections["A"], 100_000))  # this budget packs everything
+    packed = pack_context(sections["A"], base)
+    llm = MeteredLLM(_limited(base * 3 // 4, provider=provider), Budget(), "subtask_a")
+    out = run_subtask(
+        "A", llm, context, packed, source=SRC, existing_unknown_ids=set(), max_tokens=500,
+        repack=lambda b: pack_context_report(sections["A"], b), budget=base,
+    )  # fmt: skip
+    assert out.ok
+    (ev,) = out.evidence
+    (rec,) = llm.records()
+    assert ev.content["evicted"] and list(rec.evicted) == ev.content["evicted"]
+    assert not any(t.startswith("README.md") for t in rec.evicted)  # highest priority kept
+
+
+def test_subtask_normal_context_has_no_evicted_key(ctx: Ctx) -> None:
+    _, context, packed = ctx
+    out = _run("A", [A_ANSWER], context, packed["A"])
+    assert out.ok and "evicted" not in out.evidence[0].content

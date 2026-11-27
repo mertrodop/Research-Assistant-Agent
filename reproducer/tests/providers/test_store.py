@@ -11,7 +11,16 @@ import pytest
 from reproducer.domain.evidence import Evidence, make_evidence
 from reproducer.domain.unknowns import Assumption, UnknownOpened, unknown_id_for
 from reproducer.providers.llm import Budget, FakeLLM, MeteredLLM, prompt_sha256
-from reproducer.providers.store import EVENTS_FILE, EVIDENCE_FILE, LLM_CALLS_FILE, RunStore
+from reproducer.providers.store import (
+    EVENTS_FILE,
+    EVIDENCE_FILE,
+    LLM_CALLS_FILE,
+    NotARunStore,
+    RunLocked,
+    RunStore,
+    lock_holder,
+    run_lock,
+)
 
 
 def _ev(i: int, source: str = "repo@abc") -> Evidence:
@@ -212,3 +221,75 @@ def test_corrupt_call_record_line_raises_with_line_number(tmp_path: Path) -> Non
     (tmp_path / LLM_CALLS_FILE).write_text('{"node": "x"}\n')
     with pytest.raises(ValueError, match=r"llm_calls.jsonl:1"):
         store.load_call_records()
+
+
+# --- run lock ------------------------------------------------------------------------------
+
+
+def test_run_lock_second_acquire_fails_fast(tmp_path: Path) -> None:
+    import os
+    import time
+
+    with run_lock(tmp_path) as path:
+        assert path.read_text().strip() == str(os.getpid())
+        t0 = time.monotonic()
+        with pytest.raises(RunLocked, match=f"another `run` is in progress.*pid {os.getpid()}"):
+            with run_lock(tmp_path):
+                pass
+        assert time.monotonic() - t0 < 1.0  # non-blocking
+    with run_lock(tmp_path):  # released on exit
+        pass
+
+
+def test_run_lock_held_across_processes(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "from reproducer.providers.store import RunLocked, run_lock\n"
+        "try:\n"
+        "    with run_lock(sys.argv[1]):\n"
+        "        sys.exit(0)\n"
+        "except RunLocked:\n"
+        "    sys.exit(7)\n"
+    )
+    with run_lock(tmp_path):
+        held = subprocess.run([sys.executable, "-c", code, str(tmp_path)], timeout=30)
+    free = subprocess.run([sys.executable, "-c", code, str(tmp_path)], timeout=30)
+    assert (held.returncode, free.returncode) == (7, 0)
+
+
+def test_lock_holder_probe_is_read_only(tmp_path: Path) -> None:
+    import os
+
+    assert lock_holder(tmp_path) is None
+    assert not (tmp_path / "run.lock").exists()  # the probe never creates the file
+    with run_lock(tmp_path):
+        assert lock_holder(tmp_path) == str(os.getpid())
+        with run_lock(tmp_path / "other"):  # other stores are independent
+            pass
+    assert lock_holder(tmp_path) is None  # released; the stale pid file is not a holder
+    with run_lock(tmp_path):  # the probe left the lock acquirable
+        pass
+
+
+def test_create_false_on_missing_store_creates_nothing(tmp_path: Path) -> None:
+    root = tmp_path / "missing"
+    with pytest.raises(NotARunStore, match="not a run store"):
+        RunStore(root, create=False)
+    assert not root.exists()
+    root.mkdir()
+    with pytest.raises(NotARunStore, match="not a run store"):
+        RunStore(root, create=False)
+    assert list(root.iterdir()) == []
+
+
+def test_create_false_reads_without_creating_files(tmp_path: Path) -> None:
+    RunStore(tmp_path).append_evidence(_ev(1))
+    (tmp_path / EVENTS_FILE).unlink()
+    (tmp_path / LLM_CALLS_FILE).unlink()
+    store = RunStore(tmp_path, create=False)
+    assert list(store.load_evidence()) == [_ev(1).evidence_id]
+    assert store.load_events() == () and store.load_call_records() == ()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [EVIDENCE_FILE]

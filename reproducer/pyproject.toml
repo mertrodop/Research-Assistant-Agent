@@ -9,6 +9,7 @@ description = "Reproduce reported paper results from a GitHub repo."
 requires-python = ">=3.10"
 dependencies = [
     "langgraph>=1.2,<2",
+    "mcp>=2.3,<3",
     "pydantic>=2",
     "pyyaml>=6",
     "tomli>=2; python_version < \"3.11\"",
@@ -32,5 +33,6 @@ testpaths = ["tests"]
 markers = [
     "network: needs internet access (deselected by default)",
     "llm_live: calls a real LLM backend, e.g. local Ollama (deselected by default)",
+    "docker: needs a local Docker daemon; builds/runs containers (deselected by default)",
 ]
-addopts = "-m 'not network and not llm_live'"
+addopts = "-m 'not network and not llm_live and not docker'"

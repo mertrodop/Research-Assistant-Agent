@@ -519,7 +519,9 @@ def test_configure_from_spec_prints_ledger_and_unknowns(
     assert "paper:          paper:demo" in text
     assert "repo:           https://github.com/example-lab/resnet18-cifar10" in text
     assert "events:         3 written" in text  # weight_decay (paper) + 2 subtask proposals
-    assert "ledger:         tolerance abs=0.3 rel=None" in text
+    assert "ledger:         fallback tolerance abs=0.3 rel=None" in text
+    # no tolerance evidence in this store: the --tol-abs fallback is used and says so
+    assert text.count("tolerance: abs=0.3 rel=None (fallback --tol-abs (no tolerance") == 2
     for cid, value in (("c1", "95.3"), ("c2", "93.1")):
         assert (
             f"  {cid}  metric=top1_accuracy  paper={value} %  status=open  fidelity=-  "
@@ -557,3 +559,85 @@ def test_configure_bad_spec_fails_without_clone(
     assert "status:         configure_failed" in captured.out
     assert "no GitHub repository in code_links" in captured.err
     assert not (out / "repo").exists()
+
+
+# --- ledger (read-only) + run lock -----------------------------------------------------------
+
+CUTOUT_SPEC = Path(__file__).resolve().parents[1] / "evals" / "cutout" / "spec.json"
+
+
+def _ledger_store(out: Path) -> RunStore:
+    from reproducer.domain.contracts import ExperimentResult, ReproSpec
+    from reproducer.domain.ledger import make_run_evidence, tolerance_evidence
+    from reproducer.domain.unknowns import spec_to_evidence
+
+    spec = ReproSpec.model_validate_json(CUTOUT_SPEC.read_text())
+    store = RunStore(out)
+    records, _ = spec_to_evidence(spec, "paper:cutout")
+    for ev in records:
+        store.append_evidence(ev)
+    for c in spec.claims:
+        cev = next(e for e in records if e.kind == "paper_claim"
+                   and e.content["claim_id"] == c.claim_id)  # fmt: skip
+        store.append_evidence(
+            tolerance_evidence(c, claim_evidence_id=cev.evidence_id, source="paper:cutout")
+        )
+    result = ExperimentResult(
+        claim_id="c10plus_resnet18_cutout", run_id="r1", exit_code=0,
+        metrics={"raw:test_acc": 0.959, "test_error": 4.100000000000003}, log_ref="runs/r1/run.log",
+        config_digest="D" * 64, duration=5804.9, gpu_hours=1.6125,
+    )  # fmt: skip
+    store.append_evidence(
+        make_run_evidence(
+            result, spec_faithful=False, assumption_evidence_ids=("a" * 64,), source="repo:x@0"
+        )  # fmt: skip
+    )
+    return store
+
+
+def test_ledger_cli_is_read_only_and_prints_verdicts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "out"
+    _ledger_store(out)
+    before = {p.name: p.read_bytes() for p in out.iterdir()}
+    assert main(["ledger", "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before  # nothing written
+    assert "claim c10plus_resnet18_cutout  (test_error)" in text
+    assert "  paper:        3.99 % ± 0.26" in text
+    assert "  ours:         4.10 %  (raw test_acc=0.959;" in text
+    assert "  |diff|:       0.11" in text
+    assert "  verdict:      within tolerance (0.11 <= 0.26)" in text
+    assert "  status:       verified" in text and "  fidelity:     inferred" in text
+    assert "    - [protocol] single run vs paper mean of 5" in text
+    assert "  paper:        21.96 % ± 0.48" in text and "no completed run" in text
+    assert "  GPU hours:    1.613 (1 run_result(s))" in text
+    assert "  tokens:       api=0 local=0 calls=0" in text
+
+
+def test_ledger_cli_without_tolerance_evidence_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from reproducer.domain.contracts import ReproSpec
+    from reproducer.domain.unknowns import spec_to_evidence
+
+    store = RunStore(tmp_path / "out")
+    records, _ = spec_to_evidence(ReproSpec.model_validate_json(CUTOUT_SPEC.read_text()), "p")
+    for ev in records:
+        store.append_evidence(ev)
+    assert main(["ledger", "--out", str(tmp_path / "out")]) == 1
+    assert "no pre-registered tolerance evidence" in capsys.readouterr().err
+
+
+def test_run_exits_immediately_when_another_run_holds_the_lock(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from reproducer.providers.store import run_lock
+
+    out = tmp_path / "out"
+    RunStore(out)
+    with run_lock(out):
+        assert main(["run", "--out", str(out)]) == 3
+    err = capsys.readouterr().err
+    assert "another `run` is in progress" in err and "one `run` per store" in err

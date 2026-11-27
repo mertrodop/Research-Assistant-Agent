@@ -1,0 +1,20 @@
+{
+  "code_links": ["file:toyrepo"],
+  "datasets": ["toyC"],
+  "claims": [
+    {
+      "claim_id": "toyC_err",
+      "metric": "test_error",
+      "value": 25.0,
+      "unit": "%",
+      "dataset": "toyC",
+      "split": "test",
+      "setting": "SYNTHETIC toy evaluator on toyC",
+      "location": "Table 1 (SYNTHETIC)",
+      "quote": "toyC 25.00 ± 0.10"
+    }
+  ],
+  "setup": [
+    {"name": "epochs", "value": "3", "location": "Section 2 (SYNTHETIC)", "quote": "we evaluate for 3 epochs"}
+  ]
+}

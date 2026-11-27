@@ -160,6 +160,22 @@ def test_run_evidence_fields() -> None:
         assert key in ev.content
 
 
+def test_run_evidence_artifacts_key_is_additive() -> None:
+    old = _run("r1", 95.0)
+    assert "artifacts" not in old.content  # None: content (and id) as before
+    result = ExperimentResult.model_validate(
+        {k: old.content[k] for k in ExperimentResult.model_fields}
+    )
+    refs = ["runs/r1/artifacts/b", "runs/r1/artifacts/a"]
+    new = make_run_evidence(result, spec_faithful=True, assumption_evidence_ids=(),
+                            source="run", artifacts=refs)  # fmt: skip
+    assert new.content["artifacts"] == ["runs/r1/artifacts/a", "runs/r1/artifacts/b"]
+    assert {k: v for k, v in new.content.items() if k != "artifacts"} == old.content
+    empty = make_run_evidence(result, spec_faithful=True, assumption_evidence_ids=(),
+                              source="run", artifacts=[])  # fmt: skip
+    assert empty.content["artifacts"] == []  # recorded: the run kept no files
+
+
 @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
 def test_run_evidence_non_finite_marks_diverged(bad: float) -> None:
     ev = _run("r1", bad)

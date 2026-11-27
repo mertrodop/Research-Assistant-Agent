@@ -17,7 +17,7 @@ import posixpath
 import re
 import shlex
 import sys
-from collections.abc import Iterable, Mapping, Set
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -30,7 +30,7 @@ from reproducer.domain.evidence import Evidence, EvidenceKind, canonical_json, m
 from reproducer.domain.grounding import CITATION_MAX_QUOTE_CHARS, Citation, normalize_repo_path
 from reproducer.domain.inventory import RepoInventory
 from reproducer.domain.unknowns import UnknownOpened, unknown_id_for
-from reproducer.graph.gate import gated_call
+from reproducer.graph.eviction import call_with_eviction
 from reproducer.graph.nodes.configure import MAX_CONFIG_BYTES
 from reproducer.graph.state import SubtaskSummary
 from reproducer.providers.llm import LLM, BudgetExceeded, LLMError
@@ -556,12 +556,25 @@ def config_keys(text: str, suffix: str) -> frozenset[str] | str:
 # --------------------------------------------------------------------------- entrypoints
 
 
+class ArgSpec(_Frozen):
+    """One argparse add_argument call (ast only). Values that are not literals (or a
+    module-level single literal binding such as `choices=dataset_options`) are None."""
+
+    option_strings: tuple[str, ...]  # e.g. ("--dataset", "-d"); positional: ("data",)
+    dest: str | None  # explicit dest=, else derived like argparse
+    type: str | None = None  # source name of type=, e.g. "int"
+    default: Any = None  # literal default (None if absent or not a literal)
+    action: str | None = None  # literal action=, e.g. "store_true"
+    choices: tuple[Any, ...] | None = None
+
+
 class EntrypointCandidate(_Frozen):
     path: str
     has_main_guard: bool
     uses_argparse: bool
     uses_click: bool
     arg_names: tuple[str, ...]  # literal option/argument names, in source order
+    arguments: tuple[ArgSpec, ...] = ()  # argparse spec per add_argument (additive)
 
 
 class EntrypointScan(_Frozen):
@@ -590,10 +603,74 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
+def _literal(tree: ast.Module, node: ast.expr) -> tuple[bool, Any]:
+    """(True, value) for a literal, or a Name with a single module-level literal binding."""
+    if isinstance(node, ast.Name):
+        bound = _single_literal_binding(tree, node.id, node.lineno)
+        if bound is None:
+            return False, None
+        node = bound
+    try:
+        return True, ast.literal_eval(node)
+    except _PARSE_ERRORS:
+        return False, None
+
+
+def _derived_dest(options: Sequence[str]) -> str | None:
+    """argparse's rule: first long option, else first short option, else the positional
+    name; leading dashes stripped and '-' -> '_'."""
+    if not options:
+        return None
+    longs = [o for o in options if o.startswith("--")]
+    shorts = [o for o in options if o.startswith("-") and not o.startswith("--")]
+    pick = longs[0] if longs else (shorts[0] if shorts else options[0])
+    return pick.lstrip("-").replace("-", "_") or None
+
+
+def _arg_spec(tree: ast.Module, call: ast.Call) -> ArgSpec | None:
+    options = tuple(
+        a.value for a in call.args if isinstance(a, ast.Constant) and isinstance(a.value, str)
+    )
+    if not options:
+        return None
+    kw = {k.arg: k.value for k in call.keywords if k.arg is not None}
+    dest: str | None = _derived_dest(options)
+    if "dest" in kw:
+        ok, v = _literal(tree, kw["dest"])
+        dest = v if ok and isinstance(v, str) else None
+    type_name: str | None = None
+    if "type" in kw:
+        type_name = ast.unparse(kw["type"])[:100]
+    default: Any = None
+    if "default" in kw:
+        ok, v = _literal(tree, kw["default"])
+        default = v if ok and isinstance(v, (str, int, float, bool, type(None))) else None
+    action: str | None = None
+    if "action" in kw:
+        ok, v = _literal(tree, kw["action"])
+        action = v if ok and isinstance(v, str) else ast.unparse(kw["action"])[:100]
+    choices: tuple[Any, ...] | None = None
+    if "choices" in kw:
+        ok, v = _literal(tree, kw["choices"])
+        if ok and isinstance(v, (list, tuple, set, frozenset)):
+            items = sorted(v, key=repr) if isinstance(v, (set, frozenset)) else list(v)
+            if all(isinstance(i, (str, int, float, bool)) for i in items):
+                choices = tuple(items)
+    return ArgSpec(
+        option_strings=options,
+        dest=dest,
+        type=type_name,
+        default=default,
+        action=action,
+        choices=choices,
+    )
+
+
 def _scan_module(path: str, tree: ast.Module) -> EntrypointCandidate | None:
     has_main = any(_is_main_guard(s) for s in tree.body)
     uses_argparse = uses_click = False
     names: list[str] = []
+    arguments: list[tuple[int, int, ArgSpec]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             uses_click |= any(a.name.split(".")[0] == "click" for a in node.names)
@@ -604,6 +681,10 @@ def _scan_module(path: str, tree: ast.Module) -> EntrypointCandidate | None:
             if name == "ArgumentParser":
                 uses_argparse = True
             elif name in ("add_argument", "option", "argument"):
+                if name == "add_argument":
+                    spec = _arg_spec(tree, node)
+                    if spec is not None:
+                        arguments.append((node.lineno, node.col_offset, spec))
                 for a in node.args:
                     if isinstance(a, ast.Constant) and isinstance(a.value, str):
                         if a.value not in names:
@@ -616,6 +697,7 @@ def _scan_module(path: str, tree: ast.Module) -> EntrypointCandidate | None:
         uses_argparse=uses_argparse,
         uses_click=uses_click,
         arg_names=tuple(names),
+        arguments=tuple(a for *_, a in sorted(arguments, key=lambda t: (t[0], t[1]))),
     )
 
 
@@ -657,17 +739,26 @@ def pack_context(sections: Iterable[ContextSection | Mapping[str, Any]], max_cha
     A section that does not fit is cut with "[truncated N chars]"; sections that get no room
     at all are summarized by a final "[omitted K sections]" line. Never exceeds max_chars.
     """
+    return pack_context_report(sections, max_chars)[0]
+
+
+def pack_context_report(
+    sections: Iterable[ContextSection | Mapping[str, Any]], max_chars: int
+) -> tuple[str, tuple[str, ...]]:
+    """pack_context plus the titles of the sections it truncated or omitted (priority
+    order: a smaller budget drops the lowest-priority sections first, then truncates)."""
     if max_chars < 0:
         raise ValueError("max_chars must be >= 0")
     secs = [s if isinstance(s, ContextSection) else ContextSection(**s) for s in sections]
     ordered = [s for _, s in sorted(enumerate(secs), key=lambda p: (-p[1].priority, p[0]))]
     full = _SEP.join(_block(s.title, s.text) for s in ordered)
     if len(full) <= max_chars:
-        return full
+        return full, ()
 
     reserve = len(f"{_SEP}[omitted {len(ordered)} sections]")
     budget = max_chars - reserve
     parts: list[str] = []
+    cut_titles: list[str] = []
     used = 0
     omitted = 0
     for s in ordered:
@@ -678,6 +769,7 @@ def pack_context(sections: Iterable[ContextSection | Mapping[str, Any]], max_cha
             parts.append(block)
             used += sep + len(block)
             continue
+        cut_titles.append(s.title)
         header = len(_block(s.title, ""))
         marker_max = len(f"\n[truncated {len(s.text)} chars]")
         keep = room - header - marker_max
@@ -691,7 +783,7 @@ def pack_context(sections: Iterable[ContextSection | Mapping[str, Any]], max_cha
     out = _SEP.join(parts)
     if omitted:
         out += f"{_SEP if out else ''}[omitted {omitted} sections]"
-    return out[:max_chars]
+    return out[:max_chars], tuple(cut_titles)
 
 
 # --------------------------------------------------------------------------- evidence
@@ -1229,6 +1321,9 @@ SUBTASK_EXAMPLES: dict[str, str] = {
 
 SubtaskKind = Literal["A", "B", "C"]
 SUBTASK_KINDS: tuple[SubtaskKind, ...] = ("A", "B", "C")
+# node metadata stored next to the schema fields in A/B/C evidence content (not schema data):
+# strip them before re-validating the content with the schema (extra="forbid")
+SUBTASK_META_KEYS = frozenset({"evicted", "gate_attempts"})
 _SUBTASKS: dict[str, tuple[type[BaseModel], str, EvidenceKind]] = {
     "A": (EnvSpec, SYSTEM_A, "env_spec"),
     "B": (EntrypointList, SYSTEM_B, "entrypoints"),
@@ -1303,7 +1398,17 @@ def build_subtask_context(
     *,
     max_chars: int = 12_000,
 ) -> tuple[dict[str, Any], dict[SubtaskKind, str]]:
-    """Validation context + one packed prompt per subtask (pure).
+    """Validation context + one packed prompt per subtask (pure); see subtask_sections."""
+    context, sections = subtask_sections(evidence, facts, scan)
+    return context, {k: pack_context(secs, max_chars) for k, secs in sections.items()}
+
+
+def subtask_sections(
+    evidence: Mapping[str, Evidence],
+    facts: Iterable[Evidence],
+    scan: EntrypointScan,
+) -> tuple[dict[str, Any], dict[SubtaskKind, list[ContextSection]]]:
+    """Validation context + the prompt sections of each subtask (pure, unpacked).
 
     Context: repo_files (frozenset, from the single inventory record), evidence_ids
     (frozenset of the ids in texts), texts (evidence_id -> README full text, requirement /
@@ -1457,12 +1562,12 @@ def build_subtask_context(
         "metric_line_evidence": metric_line_evidence,
         "command_evidence": {p: frozenset(ids) for p, ids in command_evidence_ids.items()},
     }
-    packed: dict[SubtaskKind, str] = {
-        "A": pack_context([*sections, version_section], max_chars),
-        "B": pack_context([*sections, command_section], max_chars),
-        "C": pack_context([*sections, metric_section], max_chars),
+    per_kind: dict[SubtaskKind, list[ContextSection]] = {
+        "A": [*sections, version_section],
+        "B": [*sections, command_section],
+        "C": [*sections, metric_section],
     }
-    return context, packed
+    return context, per_kind
 
 
 @dataclass(frozen=True)
@@ -1511,23 +1616,33 @@ def run_subtask(
     existing_unknown_ids: set[str],
     max_tokens: int,
     max_retries: int = 2,
+    repack: Callable[[int], tuple[str, tuple[str, ...]]] | None = None,
+    budget: int | None = None,
 ) -> SubtaskOutcome:
     """One gated LLM subtask. On success: one derived/llm Evidence linked to every cited
     evidence_id (full ids; aliases are resolved during validation), plus UnknownOpened for
     each proposal not already open (first wins). Unknown names are limited per subtask
     (ALLOWED_UNKNOWNS, passed as context["allowed_unknowns"]); "<pkg>_version" unknowns are
-    dropped when the same output cites that package's version. BudgetExceeded / LLMError
-    (incl. ContextTooLong) propagate."""
+    dropped when the same output cites that package's version. Context eviction: on a
+    context-limit error the context is re-packed by repack(budget) at half the budget
+    (`budget` = the max_chars `packed` was made with), at most twice; the evicted section
+    titles go into the evidence ("evicted"). BudgetExceeded / LLMError (incl. ContextTooLong
+    after the evictions) propagate."""
     if kind not in _SUBTASKS:
         raise ValueError(f"unknown subtask kind {kind!r}")
     for key in _REQUIRED_MAP_CONTEXT:
         if not isinstance(context.get(key), Mapping):
             raise ValueError(f"run_subtask: validation context key {key!r} must be a mapping")
     schema, system, ev_kind = _SUBTASKS[kind]
-    result = gated_call(
+
+    def build(b: int | None) -> tuple[str, str, tuple[str, ...]]:
+        text, evicted = (packed, ()) if b is None or b == budget or repack is None else repack(b)
+        return system, f"{text}\n\nReturn the JSON now.", evicted
+
+    call = call_with_eviction(
         llm,
-        system=system,
-        prompt=f"{packed}\n\nReturn the JSON now.",
+        build,
+        budget=budget,
         schema=schema,
         context={**context, "allowed_unknowns": ALLOWED_UNKNOWNS[kind]},
         max_tokens=max_tokens,
@@ -1535,15 +1650,20 @@ def run_subtask(
         required_context=_REQUIRED_SET_CONTEXT,
         examples=SUBTASK_EXAMPLES,
     )
+    result = call.result
     if not result.ok or result.value is None:
         return SubtaskOutcome(kind, False, None, (), (), result.errors, result.attempts)
 
     value, dropped = _drop_cited_version_unknowns(result.value)
+    content = value.model_dump(mode="json")
+    if call.evicted:
+        content["evicted"] = list(call.evicted)
+    content["gate_attempts"] = result.attempts  # additive: tries of the gate that answered
     ev = make_evidence(
         kind=ev_kind,
         source=source,
         locator=f"subtask:{kind}",
-        content=value.model_dump(mode="json"),
+        content=content,
         confidence="derived",
         authority="llm",
         links=sorted(_cited_ids(value)),
@@ -1579,9 +1699,9 @@ def _subtask_node(
     LLMError become a failed summary so the other branches' evidence is still persisted."""
     evidence = {ev.evidence_id: ev for ev in state["evidence"]}
     facts, scan = load_repo_facts(evidence)
-    context, packed = build_subtask_context(
-        evidence, facts, scan, max_chars=state.get("max_chars", 12_000)
-    )
+    max_chars = state.get("max_chars", 12_000)
+    context, sections = subtask_sections(evidence, facts, scan)
+    packed = pack_context(sections[kind], max_chars)
     existing = {e.unknown_id for e in state.get("events", ()) if isinstance(e, UnknownOpened)}
     llm = deps["llm_for"](f"subtask_{kind.lower()}")
     llm.on_record = deps["store"].append_call_record
@@ -1590,10 +1710,12 @@ def _subtask_node(
             kind,
             llm,
             context,
-            packed[kind],
+            packed,
             source=state["source"],
             existing_unknown_ids=existing,
             max_tokens=state.get("max_tokens", 1_500),
+            repack=lambda b: pack_context_report(sections[kind], b),
+            budget=max_chars,
         )
         ok, attempts, errors = out.ok, out.attempts, out.errors
         new_evidence, events = list(out.evidence), list(out.events)
