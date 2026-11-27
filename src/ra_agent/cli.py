@@ -115,6 +115,16 @@ def repair_task(slug: str, problems: list[str]) -> str:
     )
 
 
+def _show_progress_logs() -> None:
+    """Docling and the HTTP clients log their progress at INFO; show it like the MCP server used to."""
+    import logging
+
+    from rich.console import Console
+    from rich.logging import RichHandler
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[RichHandler(console=Console(stderr=True))])
+
+
 def ingest_command(args: argparse.Namespace) -> int:
     """Pipeline first. The agent only runs when problems are left. Needs-review notes stay in staging."""
     from .tools import Workspace
@@ -122,6 +132,7 @@ def ingest_command(args: argparse.Namespace) -> int:
     settings = Settings.load(args.config)
     settings.agent.max_steps = args.max_steps or settings.agent.max_steps
     load_env_file()
+    _show_progress_logs()
     ws = Workspace(settings)
     out = ws.ingest_paper(_find_pdf(args.pdf, args.config))
     if not out["ok"]:
