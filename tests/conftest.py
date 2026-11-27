@@ -69,7 +69,6 @@ def ws(tmp_path, monkeypatch):
     settings.paths.inbox_dir = str(inbox)
     settings.paths.vault_dir = str(tmp_path / "vault")
     settings.paths.staging_dir = str(tmp_path / "staging")
-    settings.paths.memory_dir = str(tmp_path / "memory")
     settings.pipeline.cache_dir = str(tmp_path / "cache")
     settings.crossref.cache_dir = str(tmp_path / "crossref")
     # no network: no external record, no references

@@ -41,7 +41,6 @@ class PathSettings(BaseModel):
     inbox_dir: str = "vault/Inbox"  # new PDFs; commit moves one to Papers/<slug>/raw/
     vault_dir: str = "vault"
     staging_dir: str = "staging"
-    memory_dir: str = "memory"
 
     def list_pdfs(self) -> list[Path]:
         """PDFs the tools may read: the Inbox and each paper's raw/ folder."""

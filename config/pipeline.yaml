@@ -27,7 +27,6 @@ paths:
   inbox_dir: vault/Inbox
   vault_dir: vault
   staging_dir: staging
-  memory_dir: memory
 
 figures:
   enabled: true

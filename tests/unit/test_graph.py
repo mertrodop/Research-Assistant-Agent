@@ -1,9 +1,8 @@
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
@@ -36,11 +35,6 @@ def run(ws, responses, task="ingest paper.pdf", paper="paper.pdf", tools=None, r
     return asyncio.run(go()), model, graph, config
 
 
-def episodes(ws):
-    path = Path(ws.settings.paths.memory_dir) / "episodes.jsonl"
-    return [json.loads(line) for line in path.read_text().splitlines()]
-
-
 def vault_files(ws):
     root = Path(ws.settings.paths.vault_dir) / "Papers"  # the Inbox is not a note
     return [p for p in root.rglob("*") if p.is_file()] if root.exists() else []
@@ -50,7 +44,6 @@ def test_finish(ws):
     out, model, _, _ = run(ws, [call("list_papers"), AIMessage(content="done")])
     assert out["outcome"] == "finish" and out["steps"] == 2 and model.calls == 2
     assert out["failure"] == ""
-    assert episodes(ws)[-1]["outcome"] == "finish"
 
 
 def test_step_budget(ws):
@@ -59,7 +52,6 @@ def test_step_budget(ws):
     out, model, _, _ = run(ws, script)
     assert model.calls == 12 and out["steps"] == 12
     assert out["outcome"] == "fallback" and "step_budget" in out["failure"]
-    assert episodes(ws)[-1]["failure"] == out["failure"]
 
 
 def test_repeated_action(ws):
@@ -100,8 +92,6 @@ def test_validate_call(ws):
     inside = [paths.inbox_dir, paths.vault_dir, paths.staging_dir]
     assert all(validate_call("ingest_paper", {"pdf": f"{d}/a.pdf"}, tools, paths) is None for d in inside)
     assert validate_call("ingest_paper", {"pdf": f"{paths.vault_dir}/../elsewhere/a.pdf"}, tools, paths)
-    # free text may contain slashes
-    assert validate_call("save_procedure", {"name": "n", "text": "use granite/docling"}, tools, paths) is None
 
 
 def test_failure_sentence():
@@ -168,16 +158,8 @@ def test_eviction(ws):
     script = [call("big", 0, n=1), call("big", 1, n=2), call("big", 2, n=3), AIMessage(content="done")]
     # "big" is outside TOOL_KINDS, so each call waits for approval (fail closed)
     out, _, _, _ = run(ws, script, tools=local_tools(ws) + [big], resume=["approve"] * 3)
-    assert out["evicted"] and episodes(ws)[-1]["evicted"]
+    assert out["evicted"]
     assert any(str(m.content).startswith("[evicted] ") for m in out["messages"])
-
-
-def test_procedure_in_next_system_message(ws):
-    run(ws, [call("save_procedure", name="retry", text="rerun with granite"), AIMessage(content="ok")],
-        resume=["approve"])
-    out, _, _, _ = run(ws, [AIMessage(content="ok")], thread="next")
-    system = next(m for m in out["messages"] if isinstance(m, SystemMessage))
-    assert "rerun with granite" in system.content and "DATA>>>" in system.content
 
 
 def test_llm_error_goes_to_fallback(ws):
@@ -233,4 +215,3 @@ def test_limit_after_successful_commit_finishes_without_fallback(ws, slug):
     assert model.calls == 12 and "step_budget" in out["messages"][-1].content
     assert ws.vault.note(ws.vault.root, slug).is_file()
     assert not (Path(ws.settings.paths.staging_dir) / f"{slug}.json").exists()  # no fallback restage
-    assert episodes(ws)[-1]["outcome"] == "finish"

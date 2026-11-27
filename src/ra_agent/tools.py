@@ -22,19 +22,17 @@ from .ocr.synth import ocr_pages_check
 from .ocr.render import page_count, pdf_sha256
 from .schema import OcrDocument, PageResult, Route, Severity, localize
 from .vault import Vault
-from .vault.store import _check_slug, slugify
+from .vault.store import _check_slug
 
 TOOL_KINDS: dict[str, Literal["read", "compute", "write"]] = {
     "list_papers": "read",
     "vault_search": "read",
-    "vault_read": "read",
     "ingest_paper": "compute",
     "reprocess_page": "compute",
     "describe_figure": "compute",
     "check_references": "compute",
     "stage_note": "compute",
     "commit_note": "write",
-    "save_procedure": "write",
 }
 
 
@@ -166,16 +164,6 @@ class Workspace:
             "slugs": [h["slug"] for h in hits],
             "summary": f"{len(hits)} notes match {query!r}",
         }
-
-    @_tool
-    def vault_read(self, note: str) -> dict:
-        try:
-            text = self.vault.read(note, max_chars=1500)
-        except ValueError:
-            raise ToolError(f"note {note!r} is not a valid slug") from None
-        except FileNotFoundError:
-            raise ToolError(f"note {note!r} is not in the vault") from None
-        return {"text": _data(text), "summary": f"first {len(text)} chars of {note}"}
 
     # -- compute
     @_tool
@@ -346,12 +334,3 @@ class Workspace:
         self._docs.pop(paper, None)
         (self.staging / f"{paper}.json").unlink(missing_ok=True)
         return {"path": str(target), "summary": f"committed {paper} to the vault"}
-
-    @_tool
-    def save_procedure(self, name: str, text: str) -> dict:
-        if not text.strip():
-            raise ToolError(f"procedure {name!r} has no text")
-        target = Path(self.settings.paths.memory_dir) / "procedures" / f"{slugify(name, 'procedure')}.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-        return {"path": str(target), "summary": f"saved procedure {target.stem}"}

@@ -31,7 +31,7 @@ def test_ingest_missing_and_outside(ws, tmp_path):
 
 
 def test_paper_must_be_slug(ws):
-    for call in (ws.ingest_paper, ws.stage_note, ws.commit_note, ws.vault_read, ws.check_references):
+    for call in (ws.ingest_paper, ws.stage_note, ws.commit_note, ws.check_references):
         result = call("../../etc/passwd")
         assert not result["ok"] and "passwd" in result["error"]
 
@@ -50,9 +50,6 @@ def test_reprocess_stage_commit(ws, tmp_path):
     assert ws.commit_note(slug)["ok"]
     assert ws.vault.note(ws.vault.root, slug).is_file()
     assert ws.vault_search("pipeline")["ok"]
-    read = ws.vault_read(slug)
-    assert read["ok"] and "<<<DATA" in read["text"]
-    small(read)
 
 
 def test_describe_figure_without_vision(ws):
@@ -65,19 +62,13 @@ def test_check_references(ws):
     assert ws.check_references(slug)["ok"]
 
 
-def test_save_procedure(ws, tmp_path):
-    result = ws.save_procedure("Retry Docling twice!", "1. rerun\n2. compare")
-    assert result["ok"]
-    assert (tmp_path / "memory" / "procedures" / "retry-docling-twice.md").read_text().startswith("1. rerun")
-
-
 def test_list_papers(ws):
     result = ws.list_papers()
     assert result["ok"] and result["papers"][0]["pdf"] == "paper.pdf"
 
 
 def test_tool_kinds():
-    assert TOOL_KINDS["commit_note"] == TOOL_KINDS["save_procedure"] == "write"
+    assert TOOL_KINDS["commit_note"] == "write"
     assert set(TOOL_KINDS.values()) == {"read", "compute", "write"}
 
 

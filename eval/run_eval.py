@@ -2,9 +2,6 @@
 
     python eval/run_eval.py gate              # Tier 1 gate: fault injection, offline
     python eval/run_eval.py ingest            # engines vs text layer, real ingest + UNIT_TESTS
-    python eval/run_eval.py agent             # agentic behaviour, eval/agent_eval.py (API key)
-    python eval/run_eval.py agent --only b    # one scenario: a ablation ... f procedural memory
-    python eval/run_eval.py e2e               # `ra ingest` both papers into vault/, commit approved
     python eval/run_eval.py all               # gate + ingest
 
 Results land in eval/results/<part>.json. Every part is deterministic and cached,
@@ -344,10 +341,9 @@ FIGURE_MODELS = [
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("part", choices=["gate", "ingest", "agent", "e2e", "all"])
+    parser.add_argument("part", choices=["gate", "ingest", "all"])
     parser.add_argument("--n", type=int, default=3, help="pages per paper (ingest)")
     parser.add_argument("--dpi", type=int, default=SETTINGS.render.dpi)
-    parser.add_argument("--only", default="", help="agent: run one scenario, e.g. b")
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     parts = ["gate", "ingest"] if args.part == "all" else [args.part]
@@ -356,15 +352,7 @@ def main() -> None:
             result = eval_gate()
         elif part == "ingest":
             result = eval_ingest(args.n)
-        elif part == "agent":
-            from agent_eval import eval_agent
-
-            result = eval_agent(args.only)
-        elif part == "e2e":
-            from agent_eval import eval_end_to_end
-
-            result = eval_end_to_end()
-        path = OUT / (f"agent_{args.only}.json" if part == "agent" and args.only else f"{part}.json")
+        path = OUT / f"{part}.json"
         path.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"wrote {path.relative_to(ROOT)}")
 
