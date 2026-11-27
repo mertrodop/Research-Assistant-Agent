@@ -102,12 +102,14 @@ class Workspace:
         settings: Settings,
         engines: dict | None = None,
         vision: LlmClient | None = None,
+        verifier: LlmClient | None = None,
     ) -> None:
         # ingest always resolves references and runs the document evaluator-optimizer
         self.settings = settings.model_copy(deep=True)
         self.settings.crossref.enabled = True
         self.vision = vision or build_llm(settings.models["vision"])
-        self.pipeline = OcrPipeline(self.settings, engines=engines, vision=self.vision)
+        self.verifier = verifier or build_llm(settings.models["verifier"])
+        self.pipeline = OcrPipeline(self.settings, engines=engines, vision=self.vision, verifier=self.verifier)
         paths = self.settings.paths
         self.paths = paths
         self.staging = Path(paths.staging_dir)
@@ -233,7 +235,7 @@ class Workspace:
         checks = [ocr_pages_check(doc) if c.name == "ocr_pages" else c for c in doc.doc_checks]
         doc = doc.model_copy(
             update={
-                "markdown": assemble(pages, {p.page_no: p.figures for p in pages}, "figures"),
+                "markdown": assemble(pages, {p.page_no: p.figures for p in pages}, "figures", doc.source_pdf),
                 "doc_checks": checks,
                 "status": document_status(pages, checks),
             }

@@ -82,6 +82,9 @@ class ModelSettings(BaseModel):
     timeout_s: float = 90.0
 
 
+VERIFIER = ModelSettings(model="google/gemini-2.5-flash:online")  # web-searching fallback for what the record APIs lack
+
+
 class VisionExtra(BaseModel):
     cache_dir: str = ".cache/figures"
     concurrency: int = 2
@@ -142,7 +145,7 @@ class Settings(BaseModel):
     paths: PathSettings = Field(default_factory=PathSettings)
     figures: FigureSettings = Field(default_factory=FigureSettings)
     models: dict[str, ModelSettings] = Field(
-        default_factory=lambda: {"agent": ModelSettings(), "vision": ModelSettings()}
+        default_factory=lambda: {"agent": ModelSettings(), "vision": ModelSettings(), "verifier": VERIFIER}
     )
     vision_extra: VisionExtra = Field(default_factory=VisionExtra)
     critic: CriticSettings = Field(default_factory=CriticSettings)
@@ -155,7 +158,7 @@ class Settings(BaseModel):
     @classmethod
     def _fill_roles(cls, models: dict[str, ModelSettings]) -> dict[str, ModelSettings]:
         """A YAML that sets one role keeps the code defaults for the others."""
-        return {"agent": ModelSettings(), "vision": ModelSettings()} | models
+        return {"agent": ModelSettings(), "vision": ModelSettings(), "verifier": VERIFIER} | models
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Settings":

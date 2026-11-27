@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from ..schema import FigureRef, PageResult
+from .crossref import _REFERENCES, split_references
 from .interpret import figure_block
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -91,35 +92,106 @@ def dehyphenate(text: str, words: frozenset[str] | None = None) -> str:
 _MARKER = "<!-- image -->"
 
 
+_PLAIN_BREAK = re.compile(r"^(?:#|\||>|[-*+]\s|\d{1,2}[.)]\s|!\[|<|```|\$\$)")
+
+
+def reflow(text: str) -> str:
+    """Join the hard line breaks of the PDF text layer inside plain paragraphs."""
+    out = []
+    for paragraph in text.split("\n\n"):
+        lines = paragraph.split("\n")
+        plain = not any(_PLAIN_BREAK.match(line.strip()) for line in lines)
+        text = " ".join(line.strip() for line in lines if line.strip()) if plain else paragraph
+        if plain and out and not out[-1].startswith("#") and text[:1].islower() and not re.search(r"[.!?:;)\"”]$", out[-1]):
+            out[-1] += " " + text  # a paragraph cut by the column break continues here
+        else:
+            out.append(text)
+    return "\n\n".join(out)
+
+
 def _place_figures(body: str, figures: list[FigureRef], rel_dir: str) -> str:
-    """Figure k goes at the page's k-th image marker. Spare figures follow the
-    last paragraph; spare markers are dropped."""
-    blocks = [figure_block(figure, rel_dir) for figure in figures]
-    head, *tails = body.split(_MARKER)
+    """Each figure replaces its own caption paragraph ("Figure N: ...") with image,
+    verbatim caption and reading. A figure without a caption paragraph takes the
+    next image marker, else follows the last paragraph; spare markers are dropped."""
+    paragraphs = body.split("\n\n")
+    spare: list[FigureRef] = []
+    for figure in figures:
+        number = re.search(r"\d+", figure.label)
+        caption = re.compile(rf"^\W*(?:figure|fig\.?)\s*{number.group()}\s*[:.]", re.I) if number else None
+        at = next((i for i, par in enumerate(paragraphs) if caption and caption.match(par)), None)
+        if at is None:
+            spare.append(figure)
+        else:
+            paragraphs[at] = figure_block(figure, rel_dir, caption=" ".join(paragraphs[at].split()))
+    head, *tails = "\n\n".join(paragraphs).split(_MARKER)
     parts = [head]
     for position, tail in enumerate(tails):
-        parts.append(blocks[position] if position < len(blocks) else "")
+        parts.append(figure_block(spare[position], rel_dir, caption=spare[position].caption) if position < len(spare) else "")
         parts.append(tail)
-    parts.extend(["\n\n" + block for block in blocks[len(tails) :]])
+    parts.extend("\n\n" + figure_block(f, rel_dir, caption=f.caption) for f in spare[len(tails) :])
     return re.sub(r"\n{3,}", "\n\n", "".join(parts)).strip()
+
+
+def restore_hyphens(markdown: str, pdf_path: str | Path) -> str:
+    """Docling joins "last-" + "token" into "lasttoken" at a line break. The PDF text layer
+    still has "last-token" unbroken elsewhere: a joined word that never occurs in the PDF
+    but whose hyphenated form does gets its hyphen back."""
+    import fitz
+
+    with fitz.open(pdf_path) as doc:
+        text = "\n".join(page.get_text() for page in doc)
+    plain = text.replace("-\n", "\x00")  # a hyphen at a line end proves nothing
+    joined = {
+        word.replace("-", ""): word
+        for word in re.findall(r"(?<![\w-])[A-Za-z]{2,}(?:-[A-Za-z]{2,})+(?![\w-])", plain)
+        if "\x00" not in word
+    }
+    words = set(re.findall(r"[A-Za-z]+", text))
+    pattern = re.compile(r"(?<![\w-])(" + "|".join(map(re.escape, joined)) + r")(?![\w-])") if joined else None
+    if pattern is None:
+        return markdown
+    return pattern.sub(lambda m: m.group(1) if m.group(1) in words else joined[m.group(1)], markdown)
+
+
+def fix_fragment_headings(markdown: str) -> str:
+    """A "## and Inoue, 2025)." is the tail of the paragraph above, not a heading."""
+    return re.sub(r"\n+##\s+([a-z][^\n]*)", r" \1", markdown)
+
+
+def tidy_references(markdown: str) -> str:
+    """One bullet per bibliography entry, whichever way the pages were read."""
+    lines = markdown.splitlines()
+    start = next((i for i, line in enumerate(lines) if _REFERENCES.match(line.strip())), None)
+    if start is None:
+        return markdown
+    end = next((i for i in range(start + 1, len(lines)) if re.match(r"^#{1,6}\s", lines[i].strip())), len(lines))
+    entries = split_references("\n".join(lines[start:end]))
+    if not entries:
+        return markdown
+    return "\n".join(lines[: start + 1] + [""] + [f"- {entry.raw}" for entry in entries] + [""] + lines[end:])
 
 
 def assemble(
     pages: list[PageResult],
     figures: dict[int, list[FigureRef]] | None = None,
     rel_dir: str = "figures",
+    pdf_path: str | Path | None = None,
 ) -> str:
     ordered = sorted(pages, key=lambda page: page.page_no)
     cleaned = strip_margins(ordered)
     by_page = figures or {}
     parts: list[str] = []
     for page in cleaned:
+        text = dehyphenate(page.markdown)
         body = _place_figures(
-            dehyphenate(page.markdown), by_page.get(page.page_no, []), rel_dir
+            reflow(text) if page.engine == "text_layer" else text, by_page.get(page.page_no, []), rel_dir
         )
         if body:
             parts.append(body)
-    return "\n\n".join(parts).strip()
+    markdown = fix_fragment_headings("\n\n".join(parts).strip())
+    if pdf_path and Path(pdf_path).is_file():
+        markdown = restore_hyphens(markdown, pdf_path)
+    return tidy_references(markdown)
 
 
 def section_tree(markdown: str) -> list[tuple[int, str]]:

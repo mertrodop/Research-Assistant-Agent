@@ -25,7 +25,7 @@ from .render import PageStats, page_count, page_stats, pdf_sha256, render_page
 from .router import choose_route, dpi_for
 
 
-PIPELINE_VERSION = "2"  # bump whenever the processing of page output (engines, markdown conversion) changes
+PIPELINE_VERSION = "4"  # bump whenever the processing of page output (engines, markdown conversion) changes
 
 
 def _cache_version() -> str:
@@ -78,11 +78,13 @@ class OcrPipeline:
         engines: dict[Route, OcrEngine] | None = None,
         cache: PageCache | None = None,
         vision: LlmClient | None = None,
+        verifier: LlmClient | None = None,
     ) -> None:
         self.settings = settings or Settings()
         self.engines = dict(engines or build_engines(self.settings.engine))
         self.cache = cache or PageCache(self.settings.pipeline.cache_dir)
         self.vision = vision
+        self.verifier = verifier
         self._native = NativeTextEngine()
         self._vision_cache = Path(self.settings.vision_extra.cache_dir) / "ocr"
         if vision is not None and not isinstance(vision, NullVisionClient):
@@ -221,6 +223,8 @@ class OcrPipeline:
     ) -> OcrDocument:
         pdf_path = Path(pdf_path)
         sha = pdf_sha256(pdf_path)
+        clients = [c for c in (self.vision, self.verifier) if hasattr(c, "usage")]
+        before = [dict(c.usage) for c in clients]
         total = page_count(pdf_path)
         wanted = pages or list(range(1, total + 1))
         wanted = [page for page in wanted if 1 <= page <= total]
@@ -285,7 +289,7 @@ class OcrPipeline:
                         )
                     )
                 ordered = checked
-        markdown = assemble(ordered, figures, "figures")
+        markdown = assemble(ordered, figures, "figures", pdf_path)
         references: list[ReferenceCheck] = []
         if self.settings.crossref.enabled:
             references = resolve_references(
@@ -306,7 +310,7 @@ class OcrPipeline:
         )
         if self.settings.crossref.enabled:
             meta, doc_checks, iterations = optimize(
-                document, self._crossref_client(), self.settings.meta
+                document, self._crossref_client(), self.settings.meta, self.verifier
             )
             document = document.model_copy(
                 update={
@@ -317,6 +321,13 @@ class OcrPipeline:
                     "status": document_status(ordered, doc_checks),
                 }
             )
+        usage = {  # per model; cache hits make no call, so a fully cached run has no entry
+            c.model: {k: round(v - b[k], 6) for k, v in c.usage.items()}
+            for c, b in zip(clients, before)
+            if c.usage["calls"] > b["calls"]
+        }
+        if usage:
+            document = document.model_copy(update={"token_usage": usage})
         return document
 
     def _crossref_client(self) -> CrossrefClient:

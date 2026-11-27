@@ -53,6 +53,11 @@ models:
     api_key_env: OPEN_ROUTER_API_KEY
     max_tokens: 2000   # reasoning models spend part of it before answering
 
+  verifier:   # web-searching fallback when the record APIs have no venue (':online' adds OpenRouter web search)
+    base_url: https://openrouter.ai/api/v1
+    model: google/gemini-2.5-flash:online
+    api_key_env: OPEN_ROUTER_API_KEY
+
 vision_extra:
   concurrency: 2
   cache_dir: .cache/figures

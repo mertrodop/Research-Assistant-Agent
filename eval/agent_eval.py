@@ -212,7 +212,7 @@ def tree(path: Path) -> dict[str, str]:
 
 
 def ingest_task(pdf: str) -> str:
-    return f"Ingest {pdf} into the vault"  # the task `ra ingest` gives the agent
+    return f"Ingest \"{pdf}\" into the vault: handle its problems, stage the note, then commit it."  # the task `ra ingest` gives the agent
 
 
 # --- (a) ablation -------------------------------------------------------------

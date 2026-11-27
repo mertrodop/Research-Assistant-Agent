@@ -78,3 +78,12 @@ def ws(tmp_path, monkeypatch):
     monkeypatch.setattr("ra_agent.tools.resolve_references", lambda *a, **k: [])
     engines = {route: NativeTextEngine() for route in Route}
     return Workspace(settings, engines=engines, vision=NullVisionClient())
+
+
+@pytest.fixture(autouse=True)
+def no_venue_network(monkeypatch):
+    """DBLP / Semantic Scholar lookups never leave the machine in unit tests."""
+    from ra_agent.ocr import venue
+
+    monkeypatch.setattr(venue, "_get", lambda *a, **k: None)
+    monkeypatch.delenv("OPEN_ROUTER_API_KEY", raising=False)  # no billed model calls from tests

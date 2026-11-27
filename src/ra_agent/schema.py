@@ -133,6 +133,8 @@ class PaperMeta(BaseModel):
     arxiv_id: str = ""
     source: str = ""
     code: list[str] = Field(default_factory=list)
+    citation_count: int | None = None
+    abstract: str = ""
 
 
 class OcrDocument(BaseModel):
@@ -147,6 +149,7 @@ class OcrDocument(BaseModel):
     meta: PaperMeta | None = None
     meta_iterations: int = 0
     doc_checks: list[CheckResult] = Field(default_factory=list)
+    token_usage: dict = Field(default_factory=dict)  # vision-model calls made by this run; empty when none
 
     @property
     def review_pages(self) -> list[int]:
@@ -160,20 +163,23 @@ class OcrDocument(BaseModel):
 class NoteFrontmatter(BaseModel):
     title: str
     source_pdf: str
-    sha256: str
     pages: int
-    verified_pages: int
-    status: Literal["verified", "needs-review"]
-    metadata: Literal["verified", "unverified"] = "unverified"
-    engines: dict[str, int] = Field(default_factory=dict)
     created_at: str
-    tags: list[str] = Field(default_factory=list)
-    figures: int = 0
-    figure_files: list[str] = Field(default_factory=list)
-    figure_readings: int = 0
     code: list[str] = Field(default_factory=list)
     authors: list[str] = Field(default_factory=list)
     year: str = ""
     venue: str = ""
     doi: str = ""
     arxiv_id: str = ""
+    citation_count: int | None = None
+    abstract: str = ""
+    token_usage: dict = Field(default_factory=dict)
+    sha256: str
+    verified_pages: int
+    status: Literal["verified", "needs-review"]
+    metadata: Literal["verified", "unverified"] = "unverified"
+    engines: dict[str, int] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    figures: int = 0
+    figure_files: list[str] = Field(default_factory=list)
+    figure_readings: int = 0

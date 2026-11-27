@@ -136,10 +136,11 @@ def _read(figure: FigureRef, image_path: Path, page_text: str, client: LlmClient
     return reading
 
 
-def _cache_path(root: Path, sha: str, filename: str, model: str) -> Path:
+def _cache_path(root: Path, sha: str, filename: str, model: str, image: bytes = b"") -> Path:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", model)
     prompt = hashlib.sha256((PROMPT + COMPACT_HINT).encode()).hexdigest()[:8]  # a new prompt is a miss
-    return root / sha / f"{Path(filename).stem}__{slug}__{prompt}.json"
+    pixels = hashlib.sha256(image).hexdigest()[:8]  # same name, new crop: a miss
+    return root / sha / f"{Path(filename).stem}__{pixels}__{slug}__{prompt}.json"
 
 
 def describe_figure(
@@ -151,7 +152,9 @@ def describe_figure(
     sha: str,
 ) -> FigureRef:
     """Attach the vision reading to one figure, using the per-figure disk cache."""
-    cache = _cache_path(Path(extra.cache_dir), sha, figure.filename, client.model)
+    image_path = Path(image_dir) / figure.filename
+    image = image_path.read_bytes() if image_path.is_file() else b""
+    cache = _cache_path(Path(extra.cache_dir), sha, figure.filename, client.model, image)
     if cache.is_file():
         try:
             data = json.loads(cache.read_text(encoding="utf-8"))
@@ -161,7 +164,6 @@ def describe_figure(
         except ValueError:
             pass  # stale or corrupt cache entry: read the figure again
 
-    image_path = Path(image_dir) / figure.filename
     if not image_path.is_file():
         reading = FigureInterpretation(model=client.model, error="image file missing")
         return figure.model_copy(update={"interpretation": reading})
@@ -200,21 +202,39 @@ def _alt(figure: FigureRef) -> str:
     return f"Figure {figure.index}: {sentence}" if sentence else f"Figure {figure.index}"
 
 
-def figure_block(figure: FigureRef, rel_dir: str) -> str:
-    """Image line plus a quoted reading; a failed reading gets a single warning line."""
+def _content_rows(markdown: str) -> list[str]:
+    """Drop Markdown tables whose cells are all empty (a model reading of nothing)."""
+    rows, run = [], []
+    for row in markdown.splitlines() + [""]:
+        if row.lstrip().startswith("|"):
+            run.append(row)
+            continue
+        if any(re.search(r"[^\s|:-]", r) for r in run) or not run:
+            rows.extend(run)
+        run = []
+        rows.append(row)
+    return rows[:-1]
+
+
+def figure_block(figure: FigureRef, rel_dir: str, caption: str | None = None) -> str:
+    """Image, the caption verbatim when given, then a quoted reading; a failed reading
+    gets a single warning line."""
     lines = [f"![{_alt(figure)}]({rel_dir}/{figure.filename})"]
+    if caption:
+        lines += ["", caption]
     reading = figure.interpretation
     if reading is None:
-        return lines[0]
+        return "\n".join(lines)
     lines.append("")
     if reading.error:
         lines.append("> ⚠ description unavailable")
         return "\n".join(lines)
     lines.append(f"> [!figure] {reading.kind}")
     lines.append(f"> {reading.summary}")
-    if reading.markdown:
+    rows = _content_rows(reading.markdown)
+    if any(r.strip() for r in rows):
         lines.append(">")
-        lines.extend(f"> {row}".rstrip() for row in reading.markdown.splitlines())
+        lines.extend(f"> {row}".rstrip() for row in rows)
     if reading.ungrounded:
         lines += [
             "",

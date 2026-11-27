@@ -27,6 +27,7 @@ from ..schema import CheckResult, OcrDocument, PaperMeta, Severity
 from .codelinks import code_links, code_links_check
 from .crossref import CrossrefClient
 from .engine import NativeTextEngine
+from .venue import refine
 
 _ARXIV_ID = re.compile(r"(?:arxiv[:\s/]*)?(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.I)
@@ -232,7 +233,7 @@ def ocr_pages_check(document: OcrDocument) -> CheckResult:
 
 
 def optimize(
-    document: OcrDocument, crossref: CrossrefClient, settings: MetaSettings
+    document: OcrDocument, crossref: CrossrefClient, settings: MetaSettings, verifier=None
 ) -> tuple[PaperMeta, list[CheckResult], int]:
     """Run draft -> evaluate -> fix until the fix list is empty or iter == max_iter."""
     meta = draft_meta(document)
@@ -253,6 +254,7 @@ def optimize(
         trace.append(f"iter {iteration}: " + "; ".join(f"{f['field']} ({f['reason']})" for f in fixes))
         meta = meta.model_copy(update={f["field"]: f["value"] for f in fixes})
     meta = meta.model_copy(update={"source": record["source"] if record else ""})
+    meta = refine(meta, verifier, crossref, settings.min_title_score)
 
     checks = [
         CheckResult(

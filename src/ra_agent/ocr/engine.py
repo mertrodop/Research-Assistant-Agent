@@ -4,6 +4,7 @@ import html
 import re
 import string
 import threading
+from collections import Counter
 from pathlib import Path
 from typing import Protocol
 
@@ -38,18 +39,39 @@ class NativeTextEngine:
 
         with fitz.open(pdf_path) as doc:
             # same flags and clip as get_text("text"); "dict" defaults drop figure text
-            data = doc.load_page(page_no - 1).get_text(
-                "dict", flags=fitz.TEXTFLAGS_TEXT, clip=fitz.INFINITE_RECT()
-            )
+            page = doc.load_page(page_no - 1)
+            data = page.get_text("dict", flags=fitz.TEXTFLAGS_TEXT, clip=fitz.INFINITE_RECT())
+            page_height = page.rect.height  # data["height"] is infinite with that clip
         # Same lines, same order as get_text("text"); blocks are not separated.
-        lines = [
-            (line["bbox"][0], "".join(span["text"] for span in line["spans"]))
-            for block in data["blocks"]
-            if block.get("type") == 0
-            for line in block["lines"]
-        ]
+        body = Counter()
+        for block in data["blocks"]:
+            for line in block.get("lines", []):
+                for span in line["spans"]:
+                    body[round(span["size"], 1)] += len(span["text"])
+        body_size = body.most_common(1)[0][0] if body else 0.0
+        lines = []
+        for block in data["blocks"]:
+            for line in block.get("lines", []) if block.get("type") == 0 else []:
+                text = "".join(span["text"] for span in line["spans"])
+                bold = all(
+                    span["flags"] & 16 or "bold" in span["font"].lower()
+                    for span in line["spans"] if span["text"].strip()
+                )
+                heading = bool(
+                    bold and text.strip() and len(text.strip()) <= 80 and not text.strip().endswith(".")
+                    and min(span["size"] for span in line["spans"]) >= body_size + 0.5
+                )
+                if text.strip().isdigit() and len(text.strip()) <= 3 and line["bbox"][1] > 0.9 * page_height:
+                    continue  # the page number
+                lines.append((line["bbox"][0], text, heading))
         out: list[str] = []
-        for i, (x0, text) in enumerate(lines):
+        for i, (x0, text, heading) in enumerate(lines):
+            if heading:  # a bold, larger, short line is a section heading
+                if len(out) >= 2 and out[-2].startswith("## "):
+                    out[-2] += " " + text.strip()  # a heading that wraps
+                else:
+                    out += ([""] if out and out[-1] != "" else []) + [f"## {text.strip()}", ""]
+                continue
             # Hanging indent (bibliographies): a new entry starts where the next
             # line is indented, or where the text dedents after an indented line.
             indented_next = i + 1 < len(lines) and _INDENT[0] <= lines[i + 1][0] - x0 <= _INDENT[1]
@@ -113,9 +135,18 @@ class DoclingStandardEngine:
         try:
             converter = getattr(self._local, "converter", None)
             if converter is None:
-                from docling.document_converter import DocumentConverter
+                from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
+                from docling.datamodel.base_models import InputFormat
+                from docling.datamodel.pipeline_options import PdfPipelineOptions
+                from docling.document_converter import DocumentConverter, PdfFormatOption
 
-                converter = self._local.converter = DocumentConverter()
+                options = PdfPipelineOptions(do_formula_enrichment=True)  # equations become $$LaTeX$$
+                device = self.settings.device.lower()
+                if device in {"auto", "cpu", "cuda", "mps", "xpu"}:
+                    options.accelerator_options = AcceleratorOptions(device=AcceleratorDevice(device))
+                converter = self._local.converter = DocumentConverter(
+                    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
+                )
             result = converter.convert(
                 source=str(pdf_path),
                 page_range=(page_no, page_no),

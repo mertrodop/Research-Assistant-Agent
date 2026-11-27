@@ -33,6 +33,7 @@ def _frontmatter(document: OcrDocument) -> str:
             for route in Route
         },
         pages=len(document.pages),
+        token_usage=document.token_usage,
         verified_pages=verified,
         status=document.status,
         created_at=document.created_at.isoformat(timespec="seconds"),
@@ -45,7 +46,7 @@ def _frontmatter(document: OcrDocument) -> str:
             if figure.interpretation is not None and not figure.interpretation.error
         ),
         **(
-            document.meta.model_dump(include={"authors", "year", "venue", "doi", "arxiv_id", "code"})
+            document.meta.model_dump(include={"authors", "year", "venue", "doi", "arxiv_id", "code", "citation_count", "abstract"})
             if document.meta
             else {}
         ),

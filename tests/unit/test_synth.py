@@ -22,6 +22,14 @@ RECORD = {
 }
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_venue_lookup(monkeypatch):
+    monkeypatch.setattr(synth, "refine", lambda meta, *a: meta)  # network; tested in test_venue.py
+
+
 def document(title: str, status: str = "verified", refs: list[str] | None = None) -> OcrDocument:
     page = PageResult(page_no=1, route=Route.TEXT_LAYER, markdown=PAGE_ONE, status=status)
     checks = [

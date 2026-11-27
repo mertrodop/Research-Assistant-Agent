@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "ingest":
         pdf = _find_pdf(args.pdf, args.config)
-        return agent_command(args, f"Ingest {Path(pdf).name} into the vault", pdf)
+        return agent_command(args, f"Ingest \"{Path(pdf).name}\" into the vault: handle its problems, stage the note, then commit it.", pdf)
     return agent_command(args, args.task, _find_pdf(args.paper, args.config))
 
 
