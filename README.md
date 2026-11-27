@@ -1,13 +1,15 @@
 # Research-Assistant-Agent
 
-An agent that turns research PDFs into checked notes in an Obsidian vault. A language
-model decides what to do next, code checks every step, and a human approves every write.
+Research PDFs in, checked notes in an Obsidian vault out. A fixed OCR pipeline does the work;
+an agent steps in only when problems are left, code checks every step and a human approves
+every write.
 
 ```
 ra ingest paper.pdf
-  -> agent (LangGraph ReAct) -> guard -> tools over MCP -> agent ...
-                                  |
-                      write tools wait for your approval
+  -> OCR pipeline (engines, gate, vision-LLM rereads, figures, references, metadata)
+  -> problems left?  yes -> agent (LangGraph ReAct, tools over MCP: reprocess / describe / check refs)
+  -> status verified? yes -> diff -> your approval -> commit to vault
+                      no  -> stays in staging as needs-review
 ```
 
 Nothing is written to `vault/` or `memory/procedures/` without your approval.
@@ -30,16 +32,15 @@ and without the file the code defaults apply.
 
 ```bash
 ra papers                                   # PDFs in vault/Inbox and vault/Papers/*/raw
-ra ingest my-paper.pdf                      # drop the PDF into vault/Inbox first
+ra ingest my-paper.pdf                      # pipeline first, the agent only for what is left; drop the PDF into vault/Inbox first
 ra agent "Which ingested papers mention agents?"
 ra agent "Re-check the references of this paper" --paper core-bench-fostering-the-credibility-of-published-research-through-a-computational-reproducibility.pdf
 ra serve                                    # the same tools as an MCP server on stdio
 ```
 
 Options for `ingest` and `agent`: `--config FILE`, `--max-steps N`.
-A bare PDF name is looked up in `vault/Inbox`, then in `vault/Papers/*/raw` (re-ingest). Exit code: `0` when the agent finished,
-`1` when a limit stopped it and the deterministic fallback ran, `2` when no API key is set.
-The run ends with the answer (or the failure sentence) and the path of the note.
+A bare PDF name is looked up in `vault/Inbox`, then in `vault/Papers/*/raw` (re-ingest). Exit codes of `ingest`: `0` committed, `1` left in staging (needs-review, or you rejected it), `2` the PDF could not be ingested.
+`ra agent` keeps its own codes: `0` finished, `1` a limit stopped it and the deterministic fallback ran, `2` no API key.
 
 ## What the agent decides
 

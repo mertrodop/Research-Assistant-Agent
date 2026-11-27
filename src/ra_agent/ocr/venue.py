@@ -1,7 +1,7 @@
 """Venue and DOI of the published version of a paper.
 
 arXiv's journal_ref is usually empty, so the draft ends up with "arXiv cs.CL" even for an
-ICLR paper. Semantic Scholar, OpenAlex and DBLP know the published venue; the first record
+ICLR paper. Semantic Scholar and OpenAlex know the published venue; the first record
 with one wins. Only when none has a venue does a web-searching model look it up, and its
 answer counts only with a source URL taken from the search results.
 """
@@ -21,7 +21,6 @@ from rapidfuzz import fuzz
 from ..llm.client import VisionError
 from ..schema import PaperMeta
 
-DBLP_API = "https://dblp.org/search/publ/api"
 OPENALEX_API = "https://api.openalex.org/works"
 S2_API = "https://api.semanticscholar.org/graph/v1/paper"
 S2_FIELDS = "title,year,venue,externalIds,abstract,citationCount"
@@ -40,7 +39,7 @@ def _cached(cache: Path, produce):
 
 
 def _get(url: str, params: dict, timeout_s: float) -> dict | None:
-    """None on any failure: S2 answers 429 without a key (set S2_API_KEY), DBLP may show a bot check."""
+    """None on any failure: S2 answers 429 without a key (set S2_API_KEY) and now and then with one."""
     headers = {"x-api-key": os.environ["S2_API_KEY"]} if "semanticscholar" in url and os.environ.get("S2_API_KEY") else {}
     for attempt in range(2):  # one retry after 2 s: Semantic Scholar answers 429 now and then, even with a key
         try:
@@ -84,31 +83,6 @@ def search_s2(meta: PaperMeta, cache_dir: Path, timeout_s: float) -> list[dict]:
     return _cached(cache_dir / f"{key}.json", produce) or []
 
 
-def search_dblp(title: str, cache_dir: Path, timeout_s: float) -> list[dict]:
-    phrase = " ".join(re.findall(r"[A-Za-z0-9]+", title))[:200]
-    if len(phrase) < 12:
-        return []
-
-    def produce():
-        data = _get(DBLP_API, {"q": phrase, "format": "json", "h": "5"}, timeout_s)
-        if data is None:
-            return None
-        hits = data.get("result", {}).get("hits", {}).get("hit", [])
-        return [
-            {
-                "title": (h.get("info", {}).get("title") or "").rstrip("."),
-                "venue": h.get("info", {}).get("venue") or "",
-                "year": h.get("info", {}).get("year") or "",
-                "doi": h.get("info", {}).get("doi") or "",
-                "source": "dblp",
-            }
-            for h in hits
-        ]
-
-    key = "dblp-" + hashlib.sha256(phrase.encode()).hexdigest()[:16]
-    return _cached(cache_dir / f"{key}.json", produce) or []
-
-
 def search_openalex(title: str, cache_dir: Path, timeout_s: float) -> list[dict]:
     phrase = " ".join(re.findall(r"[A-Za-z0-9]+", title))[:200]
     if len(phrase) < 12:
@@ -139,7 +113,6 @@ def candidates(meta: PaperMeta, cache_dir: str | Path, timeout_s: float, min_tit
     cache = Path(cache_dir)
     found = (
         search_s2(meta, cache, timeout_s)
-        + search_dblp(meta.title, cache, timeout_s)
         + search_openalex(meta.title, cache, timeout_s)
     )
     return [r for r in found if fuzz.token_set_ratio(meta.title.lower(), r["title"].lower()) / 100 >= min_title]

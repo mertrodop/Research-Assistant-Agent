@@ -1,4 +1,4 @@
-"""`ra`: run the agent with human approval, ingest a paper, list papers, serve MCP."""
+"""`ra`: ingest a paper (pipeline first, the agent only for what is left), run the agent, list papers, serve MCP."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +18,7 @@ from .schema import NoteFrontmatter
 from .vault import Vault
 from .vault.store import _front
 
+REPAIR_TOOLS = {"reprocess_page", "describe_figure", "check_references"}  # all the agent may use after ingest
 DECISIONS = {"a": "approve", "e": "edit", "r": "reject"}
 
 
@@ -38,7 +39,7 @@ def edit_and_validate(path: Path, editor_cmd: str) -> str:
 def decide(payload: dict, vault: Vault, input_fn=input) -> str:
     """Show a pending write and return "approve" or "reject"."""
     tool, args = payload["tool"], payload["args"]
-    print(f"\nThe agent wants to run {tool} with {json.dumps(args, ensure_ascii=False)}\n")
+    print(f"\nAbout to run {tool} with {json.dumps(args, ensure_ascii=False)}\n")
     print(payload["diff"])
     note = vault.note(vault.staging, args.get("paper", ""))
     while True:
@@ -65,7 +66,9 @@ def note_path(messages) -> str:
     return found
 
 
-async def run_agent(task: str, paper: str, settings: Settings, config: str | None) -> dict:
+async def run_agent(
+    task: str, paper: str, settings: Settings, config: str | None, only: set[str] | None = None
+) -> dict:
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.types import Command
@@ -75,7 +78,7 @@ async def run_agent(task: str, paper: str, settings: Settings, config: str | Non
 
     args = ["-m", "ra_agent.mcp_server"] + (["--config", config] if config else [])
     server = {"command": sys.executable, "args": args, "transport": "stdio", "env": dict(os.environ)}
-    tools = await MultiServerMCPClient({"ra": server}).get_tools()
+    tools = [t for t in await MultiServerMCPClient({"ra": server}).get_tools() if only is None or t.name in only]
     graph = build_graph(
         build_chat_model(settings.models["agent"]), tools, settings,
         lambda name: Workspace(settings).fallback_ingest(name), InMemorySaver(),
@@ -102,6 +105,47 @@ def agent_command(args: argparse.Namespace, task: str, paper: str) -> int:
     if path := note_path(out["messages"]):
         print(f"Note: {path}")
     return 0 if out["outcome"] == "finish" else 1
+
+
+def repair_task(slug: str, problems: list[str]) -> str:
+    listed = "\n".join(f"- {p}" for p in problems)
+    return (
+        f'The paper "{slug}" is already ingested and staged. The pipeline left these problems:\n{listed}\n'
+        "Fix them with reprocess_page, describe_figure or check_references, then answer. Do not stage or commit."
+    )
+
+
+def ingest_command(args: argparse.Namespace) -> int:
+    """Pipeline first. The agent only runs when problems are left. Needs-review notes stay in staging."""
+    from .tools import Workspace
+
+    settings = Settings.load(args.config)
+    settings.agent.max_steps = args.max_steps or settings.agent.max_steps
+    load_env_file()
+    ws = Workspace(settings)
+    out = ws.ingest_paper(_find_pdf(args.pdf, args.config))
+    if not out["ok"]:
+        print(out["error"])
+        return 2
+    slug = out["slug"]
+    print(out["summary"])
+    if out["problems"] and not resolve_api_key(settings.models["agent"]):
+        print(f"{len(out['problems'])} problems left; set {settings.models['agent'].api_key_env} to let the agent try.")
+    elif out["problems"]:
+        asyncio.run(run_agent(repair_task(slug, out["problems"]), slug, settings, args.config, REPAIR_TOOLS))
+        ws = Workspace(settings)  # the agent worked in its own process: read its result back from staging
+    staged = ws.stage_note(slug)
+    if not staged["ok"]:
+        print(staged["error"])
+        return 2
+    if staged["status"] != "verified":
+        print(f"{slug} stays in staging as needs-review: {staged['handle']}")
+        return 1
+    if decide({"tool": "commit_note", "args": {"paper": slug}, "diff": staged["diff"]}, ws.vault) != "approve":
+        print(f"not committed, still in staging: {staged['handle']}")
+        return 1
+    print(ws.commit_note(slug)["summary"])
+    return 0
 
 
 def papers_command(args: argparse.Namespace) -> int:
@@ -145,8 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         serve(["--config", args.config] if args.config else [])
         return 0
     if args.command == "ingest":
-        pdf = _find_pdf(args.pdf, args.config)
-        return agent_command(args, f"Ingest \"{Path(pdf).name}\" into the vault: handle its problems, stage the note, then commit it.", pdf)
+        return ingest_command(args)
     return agent_command(args, args.task, _find_pdf(args.paper, args.config))
 
 

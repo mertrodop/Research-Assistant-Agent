@@ -320,6 +320,7 @@ class Workspace:
         diff = self.vault.diff(staged.slug)
         return {
             "slug": staged.slug,
+            "status": staged.status,
             "diff": _data(diff),
             "handle": str(staged.note_path),
             "summary": f"staged {staged.slug} ({staged.status}), diff {len(diff)} chars",
