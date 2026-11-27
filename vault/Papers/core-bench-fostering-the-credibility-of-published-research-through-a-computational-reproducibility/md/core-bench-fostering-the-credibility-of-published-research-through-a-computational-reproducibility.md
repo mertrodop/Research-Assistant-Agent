@@ -1,17 +1,30 @@
 ---
 title: 'CORE-Bench: Fostering the Credibility of Published Research Through a Computational Reproducibility Agent Benchmark'
 source_pdf: Papers/core-bench-fostering-the-credibility-of-published-research-through-a-computational-reproducibility/raw/core-bench-fostering-the-credibility-of-published-research-through-a-computational-reproducibility.pdf
-sha256: 1d1fbe8a3cf472fc468495e6a3bcd6b90224ba1eae3dac8d8174f98d666c3d76
 pages: 30
+created_at: '2026-11-27T13:44:34+00:00'
+code:
+- https://github.com/siegelz/core-bench
+authors:
+- Sayash Kapoor
+- Nitya Nadgir
+- Benedikt Stroebl
+year: '2024'
+venue: Transactions on machine learning research
+doi: 10.48550/arXiv.2409.11363
+arxiv_id: '2409.11363'
+citation_count: 193
+abstract: 'AI agents have the potential to aid users on a variety of consequential tasks, including conducting scientific research. To spur the development of useful agents, we need benchmarks that are challenging, but more crucially, directly correspond to real-world tasks of interest. This paper introduces such a benchmark, designed to measure the accuracy of AI agents in tackling a crucial yet surprisingly challenging aspect of scientific research: computational reproducibility. This task, fundamental to the scientific process, involves reproducing the results of a study using the provided code and data. We introduce CORE-Bench (Computational Reproducibility Agent Benchmark), a benchmark consisting of 270 tasks based on 90 scientific papers across three disciplines (computer science, social science, and medicine). Tasks in CORE-Bench consist of three difficulty levels and include both language-only and vision-language tasks. We provide an evaluation system to measure the accuracy of agents in a fast and parallelizable way, saving days of evaluation time for each run compared to a sequential implementation. We evaluated two baseline agents: the general-purpose AutoGPT and a task-specific agent called CORE-Agent. We tested both variants using two underlying language models: GPT-4o and GPT-4o-mini. The best agent achieved an accuracy of 21% on the hardest task, showing the vast scope for improvement in automating routine scientific tasks. Having agents that can reproduce existing work is a necessary step towards building agents that can conduct novel research and could verify and improve the performance of other research agents. We hope that CORE-Bench can improve the state of reproducibility and spur the development of future research agents.'
+token_usage: {}
+sha256: 1d1fbe8a3cf472fc468495e6a3bcd6b90224ba1eae3dac8d8174f98d666c3d76
 verified_pages: 30
 status: verified
 metadata: verified
 engines:
   docling: 28
-  granite: 0
-  vlm: 1
+  granite: 1
+  vlm: 0
   text_layer: 1
-created_at: '2026-11-26T15:44:19+00:00'
 tags:
 - ocr
 - verified
@@ -35,16 +48,6 @@ figure_files:
 - figures/fig-16.png
 - figures/fig-17.png
 figure_readings: 17
-code:
-- https://github.com/siegelz/core-bench
-authors:
-- Sayash Kapoor
-- Nitya Nadgir
-- Benedikt Stroebl
-year: '2024'
-venue: arXiv cs.CL
-doi: ''
-arxiv_id: '2409.11363'
 ---
 # CORE-Bench: Fostering the Credibility of Published Research Through a Computational Reproducibility Agent Benchmark
 
@@ -54,9 +57,9 @@ Zachary S. Siegel ∗, Sayash Kapoor, Nitya Nadgir, Benedikt Stroebl, Arvind Nar
 
 AI agents have the potential to aid users on a variety of consequential tasks, including conducting scientific research. To spur the development of useful agents, we need benchmarks that are challenging, but more crucially, directly correspond to real-world tasks of interest. This paper introduces such a benchmark, designed to measure the accuracy of AI agents in tackling a crucial yet surprisingly challenging aspect of scientific research: computational reproducibility. This task, fundamental to the scientific process, involves reproducing the results of a study using the provided code and data. We introduce CORE-Bench (Computational Reproducibility Agent Benchmark), a benchmark consisting of 270 tasks based on 90 scientific papers across three disciplines (computer science, social science, and medicine). Tasks in CORE-Bench consist of three difficulty levels and include both languageonly and vision-language tasks. We provide an evaluation system to measure the accuracy of agents in a fast and parallelizable way, saving days of evaluation time for each run compared to a sequential implementation. We evaluated two baseline agents: the general-purpose AutoGPT and a task-specific agent called CORE-Agent. We tested both variants using two underlying language models: GPT-4o and GPT-4o-mini. The best agent achieved an accuracy of 21% on the hardest level of tasks, showing the vast scope for improvement in automating routine scientific tasks. Having agents that can reproduce existing work is a necessary step towards building agents that can conduct novel research and could verify and improve the performance of other research agents. We hope that CORE-Bench can improve the state of reproducibility and spur the development of future research agents.
 
-Figure 1: Overview of CORE-Bench. Each task in CORE-Bench requires an agent to reproduce the results of a research paper given its repository. The agent must install libraries, packages, and dependencies and run the code. If the code runs successfully, the agent needs to search through all outputs to answer the task questions. The agent submits a report and is evaluated against the results of a successful reproduction. An agent successfully completes a task if it correctly answers all questions about a code repository.
-
 ![Figure 1: Overview of CORE-Bench.](../figures/fig-1.png)
+
+Figure 1: Overview of CORE-Bench. Each task in CORE-Bench requires an agent to reproduce the results of a research paper given its repository. The agent must install libraries, packages, and dependencies and run the code. If the code runs successfully, the agent needs to search through all outputs to answer the task questions. The agent submits a report and is evaluated against the results of a successful reproduction. An agent successfully completes a task if it correctly answers all questions about a code repository.
 
 > [!figure] diagram
 > The diagram illustrates the workflow of an AI agent in CORE-Bench, showing how it processes a task prompt and code repository, executes code on a virtual machine, and generates a report with answers to task questions, which are then evaluated for correctness.
@@ -111,9 +114,9 @@ Machine learning (ML) is no exception. While introducing the NeurIPS checklist i
 
 The importance of uncovering and documenting reproducibility issues has been recognized in the ML community. As an example, reproducibility reports warrant publication in the peer-reviewed ML journal
 
-Figure 2: Files and folders in each CodeOcean capsule. Each capsule contains a Readme, Dockerfile, and instructions on how to use Docker, which we selectively provide to the agent depending on the difficulty of the task.
-
 ![Figure 2: Files and folders in each CodeOcean capsule.](../figures/fig-2.png)
+
+Figure 2: Files and folders in each CodeOcean capsule. Each capsule contains a Readme, Dockerfile, and instructions on how to use Docker, which we selectively provide to the agent depending on the difficulty of the task.
 
 > [!figure] diagram
 > The diagram shows the file structure of a CodeOcean capsule, listing folders and files on the left and their corresponding details on the right.
@@ -156,30 +159,24 @@ In this paper, we ask: Can AI agents automate computational reproducibility of p
 
 [^2]: See: https://www.cs.mcgill.ca/~jpineau/ICLR2018-ReproducibilityChallenge.html.
 
-Figure 3: Capsule selection process. We filtered the 5,090 capsules on CodeOcean by discipline, language, and the ten selection criteria to arrive at the 90 capsules selected for CORE-Bench. We provide a breakdown of capsules by discipline in Section A.4.
-
 ![Figure 3: Capsule selection process.](../figures/fig-3.png)
+
+Figure 3: Capsule selection process. We filtered the 5,090 capsules on CodeOcean by discipline, language, and the ten selection criteria to arrive at the 90 capsules selected for CORE-Bench. We provide a breakdown of capsules by discipline in Section A.4.
 
 > [!figure] diagram
 > A flowchart illustrating the step-by-step filtering process to select 90 capsules for CORE-Bench from an initial pool of 5,090 capsules, showing removals by discipline and language, and final selections by discipline.
 >
 > Initial capsules 5,090
->   |
 >   v
 > Computer Science, social sciences, and medical sciences capsules 2,536
->   |
 >   v
 > Python and R capsules 1,657
->   |
 >   v
 > Medical sciences capsules filtered on all criteria 25
->   |
 >   v
 > Social sciences capsules filtered on all criteria 28
->   |
 >   v
 > Randomly selected Computer Science capsules 355
->   |
 >   v
 > Computer Science capsules filtered on all criteria 37
 >
@@ -245,58 +242,24 @@ Real-world computational reproducibility tasks. When constructing our benchmark,
 
 (a) Example of task execution pipeline
 
-![Figure 4: During task execution, the agent must interpret the task prompt, set up the code in the capsule, run the code, and populate the specified result in the provided JSON file.](../figures/fig-4.png)
-
-> [!figure] diagram
-> The diagram illustrates the workflow for a task in CORE-Bench, labeled as Capsule #3418007. It shows three main stages: 'Task' (with Task Prompt and Provided Task Questions), 'Set-up' (listing core files and code/data structure), and 'Run Code' followed by 'Extract Result' (showing a JSON output with example results).
->
-> Task: Capsule #3418007
->
-> Task
-> - Task Prompt: Run 'main.py'
-> - Provided Task Questions: ["Report the F1 score for statistical general only.", "Report the proposed model's AUC from the ROC curves figure."]
->
-> Set-up
-> - Core files
->   - REPRODUCING.md/
->   - README.md/
->   - environment/
->     - Dockerfile/
->     - requirements.txt/
->   - code/
->     - run/
->     - ...
-> - code
->   - feature_selection.py/
->   - LICENSE/
->   - ...
->   - main.py/
->   - utils.py/
-> - data
->   - time_features.txt/
->   - graph_features.txt/
->   - ...
->
-> Run Code
->
-> Extract Result
-> { "field": ... ,
->  "language": ... ,
->  "capsule_title": ... ,
->  "capsule_id": ... ,
->  "task_prompt": ... ,
->  "results": [
->   { "Report the F1...": 0.75... },
->   { "Report the proposed...": 0.98}
-> ],
->  "capsule_doi": ... }
-
-> [!warning]- Numbers not found in page text
-> 0.75, 0.98, 3418007 — read from the image; check against the figure.
-
 (b) Example of evaluation criteria
 
-Figure 4: During task execution, the agent must interpret the task prompt, set up the code in the capsule, run the code, and populate the specified result in the provided JSON file. For evaluation, we manually reproduced each capsule in the benchmark three times. We determine if an agent correctly solves a task if the agent's reported results for all questions fall within a 95% prediction interval for every task question of the results from the three manual runs (although only 17 / 181 task questions have stochastic answers). Prediction intervals provide a range in which we expect future observations to fall, accounting for stochasticity in the code outputs (Spence & Stanley, 2016).
+![Figure 5: During task execution, the agent must interpret the task prompt, set up the code in the capsule, run the code, and populate the specified result in the provided JSON file.](../figures/fig-5.png)
+
+![Figure 4: During task execution, the agent must interpret the task prompt, set up the code in the capsule, run the code, and populate the specified result in the provided JSON file.](../figures/fig-4.png) Figure 4: During task execution, the agent must interpret the task prompt, set up the code in the capsule, run the code, and populate the specified result in the provided JSON file. For evaluation, we manually reproduced each capsule in the benchmark three times. We determine if an agent correctly solves a task if the agent's reported results for all questions fall within a 95% prediction interval for every task question of the results from the three manual runs (although only 17 / 181 task questions have stochastic answers). Prediction intervals provide a range in which we expect future observations to fall, accounting for stochasticity in the code outputs (Spence & Stanley, 2016). > [!figure] diagram > The diagram illustrates the workflow for a task in a scientific benchmark, showing three main stages: Task (with prompt and questions), Set-up (with core files and code structure), and Extract Result (with a JSON output example). > > Task: > - Task Prompt: Run 'main.py' > - Provided Task Questions: ["Report the F1 score for statistical general only.", "Report the proposed model's AUC from the ROC curves figure."] > > Set-up: > - Core files: > - REPRODUCING.md/ > - README.md/ > - environment/ > - Dockerfile/ > - requirements.txt/ > - code/ > - run/ > - ... > - code: > - feature_selection.py/ > - LICENSE/ > - ... > - main.py/ > - utils.py/ > - data: > - time_features.txt/ > - graph_features.txt/ > - ... > > Extract Result: > { "field": ... , > "language": ... , > "capsule_title": ... , > "capsule_id": ... , > "task_prompt": ... , > "results": [ > { "Report the F1...": 0.75... }, > { "Report the proposed...": 0.98} > ], > "capsule_doi": ... } > [!warning]- Numbers not found in page text > 0.75, 0.98 — read from the image; check against the figure.
+
+> [!figure] diagram
+> The diagram illustrates the evaluation process for a capsule, showing three manual runs, the derived prediction interval, an agent run, and a final matching result.
+>
+> Manual Run 1: { "results": [{"Report the F1 score for statistical general only.": 0.7536528881857651}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
+> Manual Run 2: { "results": [{"Report the F1 score for statistical general only.": 0.7569591300356435}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
+> Manual Run 3: { "results": [{"Report the F1 score for statistical general only.": 0.7599081605158183}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
+> Prediction Interval: { "results": [{"Report the F1 score for statistical general only.": (0.7494830374982913, 0.7664012428931122)}, {"Report the proposed model's AUC from the ROC curves figure.": (0.98, 0.98)}] }
+> Agent Run: { "results": [{"Report the F1 score for statistical general only.": 0.7500611659142848}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
+> Matching results: ✓
+
+> [!warning]- Numbers not found in page text
+> 0.7494830374982913, 0.7500611659142848, 0.7536528881857651, 0.7569591300356435, 0.7599081605158183, 0.7664012428931122, 0.98, 2 — read from the image; check against the figure.
 
 2024; Raji et al., 2021; Kapoor & Narayanan, 2023). CORE-Bench tasks correspond closely to tasks that researchers must accomplish - unlike, say, coding benchmarks consisting of toy problems that don't reflect the complexity of software engineering. Improving performance on CORE-Bench will directly translate to improvements in the state of computational reproducibility, the cornerstone of scientific research.
 
@@ -311,21 +274,6 @@ Baseline agents. We developed and evaluated two variants of the AutoGPT agent (S
 1. AutoGPT: This agent is largely unmodified from the popular general-purpose AutoGPT agent, but we created another tool for the agent called query\_vision\_language\_model, which takes as input an image and a query, and outputs OpenAI API's response to the image query. This allows the agent to analyze results in figures and plots 4 . We included this modification in AutoGPT because the ability to query a vision language model is not specific to CORE-Bench. Other minor changes can be found in Section D.1.
 
 [^4]: We plan to make a pull request to include this feature in the official AutoGPT repository.
-
-![Figure 5: During task execution, the agent must interpret the task prompt, set up the code in the capsule, run the code, and populate the specified result in the provided JSON file.](../figures/fig-5.png)
-
-> [!figure] diagram
-> The diagram illustrates the evaluation process for a capsule, showing three manual runs, the derived prediction interval, an agent run, and a final matching result.
->
-> Manual Run 1: { "results": [{"Report the F1 score for statistical general only.": 0.7536528881857651}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
-> Manual Run 2: { "results": [{"Report the F1 score for statistical general only.": 0.7569591300356435}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
-> Manual Run 3: { "results": [{"Report the F1 score for statistical general only.": 0.7599081605158183}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
-> Prediction Interval: { "results": [{"Report the F1 score for statistical general only.": (0.7494830374982913, 0.7664012428931122)}, {"Report the proposed model's AUC from the ROC curves figure.": (0.98, 0.98)}] }
-> Agent Run: { "results": [{"Report the F1 score for statistical general only.": 0.7500611659142848}, {"Report the proposed model's AUC from the ROC curves figure.": 0.98}] }
-> Matching results: ✓
-
-> [!warning]- Numbers not found in page text
-> 0.7494830374982913, 0.7500611659142848, 0.7536528881857651, 0.7569591300356435, 0.7599081605158183, 0.7664012428931122, 0.98, 2 — read from the image; check against the figure.
 
 2. CORE-Agent: We built upon AutoGPT to create CORE-Agent, a task-specific variant of AutoGPT, customized for each level of CORE-Bench 5 . Our primary change was implementing a programmatic check to ensure the correct submission and keys of the file reporting the reproduced results (i.e., report.json). In addition, for each difficulty level, we added specific prompting hints to guide the agent's behavior, as detailed in Table 4. These hints address common pitfalls observed during qualitative analysis of agent performance on the training set. Notably, these adaptations required only a few days of work, with the most time-consuming aspect being the analysis of failure logs to identify effective prompting strategies. We benefited significantly from AutoGPT's auto-summarization of past actions, which expedited the identification of common failures.
 
@@ -342,9 +290,9 @@ Models. We ran both AutoGPT and CORE-Agent using GPT-4o-2024-05-13 and GPT-4o-mi
 
 [^5]: When we refer to CORE-Agent , we refer to the agent customized for that level of the benchmark.
 
-Figure 5: (1) The manager machine creates a VM for each (agent, task) pair and uploads both the capsule and the agent code to the VM. (2) The manager machine invokes the agent on each of the VMs, so they all run in parallel. (3) The manager machine downloads the results from the agent off each VM once the agent indicates task completion, deletes the VM, and locally evaluates all of the results.
-
 ![Figure 6: (1) The manager machine creates a VM for each (agent, task) pair and uploads both the capsule and the agent code to the VM.](../figures/fig-6.png)
+
+Figure 5: (1) The manager machine creates a VM for each (agent, task) pair and uploads both the capsule and the agent code to the VM. (2) The manager machine invokes the agent on each of the VMs, so they all run in parallel. (3) The manager machine downloads the results from the agent off each VM once the agent indicates task completion, deletes the VM, and locally evaluates all of the results.
 
 > [!figure] diagram
 > The diagram illustrates a three-step process for evaluating agents on CORE-Bench using virtual machines. A Manager machine creates VMs, uploads agent code and task capsules, runs the agents in parallel on the VMs, and then downloads and evaluates the results.
@@ -357,11 +305,11 @@ Figure 5: (1) The manager machine creates a VM for each (agent, task) pair and u
 > |
 > |---[3] Download and evaluate results from VM
 > |
-> Workers (multiple VMs with robot icons, labeled with capsule IDs: capsule-7038571, capsule-3137115, capsule-5367566)
+> Workers (multiple VMs shown with robot icons, labeled with capsule IDs: capsule-7038571, capsule-3137115, capsule-5367566)
 > |
-> |---AutoGPT(gpt-4o)
+> |---[AutoGPT(gpt-4o)]
 > |
-> |---CRAB-Agent(gpt-4o)
+> |---[CRAB-Agent(gpt-4o)]
 
 > [!warning]- Numbers not found in page text
 > 3137115, 5367566, 7038571 — read from the image; check against the figure.
@@ -407,66 +355,9 @@ Our results highlight the adaptability of generalist agents, demonstrating signi
 
 We ran AutoGPT and CORE-Agent using both GPT-4o and GPT-4o-mini with an API cost limit of $4. Even though the per-token cost of GPT-4o-mini is less than 5% that of GPT-4o, which allows for longer sessions before hitting the cost limit, GPT-4o still outperformed GPT-4o-mini on both agents. Despite having the same cost limits, GPT-4o-mini powered agents tended to be 3-5x cheaper than GPT-4o agents. In all settings, the average per-task cost was cheapest on CORE-Bench-Easy, followed by CORE-Bench-Medium and CORE-Bench-Hard (Figure 6).
 
-Figure 6: Scatter plot of the cost vs accuracy of agents on the test set.
-
-![Figure 7: Scatter plot of the cost vs accuracy of agents on the test set.](../figures/fig-7.png)
-
-> [!figure] chart
-> A scatter plot showing the accuracy of four agent models on CORE-Bench-Easy tasks versus their cost in USD. Each point represents a model's performance at a specific cost.
->
-> Cost (USD) | Accuracy
-> ---|---
-> 0.0 | 0.1 (pink)
-> 0.0 | 0.45 (orange)
-> 0.6 | 0.35 (purple)
-> 0.6 | 0.6 (green)
-
-> [!warning]- Numbers not found in page text
-> 0.0, 0.1, 0.35, 0.45, 0.6 — read from the image; check against the figure.
-
-Figure 7: Success rates of CORE-Agent with GPT-4o and GPT-4o-mini at varying cost limits on CORE-Bench-Hard tasks on the train set.
-
-![Figure 8: Scatter plot of the cost vs accuracy of agents on the test set.](../figures/fig-8.png)
-
-> [!figure] chart
-> A scatter plot showing accuracy versus cost (USD) for four agent models on CORE-Bench-Medium Tasks. The models are CORE-Agent with GPT-4o, CORE-Agent with GPT-4o-mini, AutoGPT with GPT-4o, and AutoGPT with GPT-4o-mini.
->
-> Cost (USD) | Accuracy
-> ---|---
-> 0.0 | 0.0 (AutoGPT with GPT-4o-mini)
-> 0.4 | 0.3 (CORE-Agent with GPT-4o-mini)
-> 1.0 | 0.6 (CORE-Agent with GPT-4o)
-> 1.2 | 0.4 (AutoGPT with GPT-4o)
-
-> [!warning]- Numbers not found in page text
-> 0.0, 0.3, 0.4, 0.6, 1.0, 1.2 — read from the image; check against the figure.
-
-To evaluate the impact of our $4 cost limit on performance, we ran CORE-Agent on the CORE-Bench-Hard with a $10 cost limit on the train set. With the new limit, GPT-4o-mini performance remained unchanged, and GPT-4o's performance increased modestly from 26% to 31% (Figure 7). Note that GPT-4o-mini outperformed GPT-4o for lower cost limits under around $2.50.
-
-Increasing the cost limit did not greatly increase accuracy because when agents succeeded at tasks, they succeeded quickly (the average cost of successful tasks for CORE-Agent and GPT-4o was $0.54, compared to $2.59 for failed tasks) but when they failed at tasks, they often hit the cost limit and failed after not making progress. Even when increasing the cost limit, agents tended to remain stuck.
-
-## 4.4 Written questions are easier than vision questions
-
-Agents consistently performed better on text-based questions than vision-based questions. CORE-Agent with GPT-4o got 59.26% vision questions correct and 87.88% written questions correct on CORE-Bench-Easy on the test set. Similarly, CORE-Agent with GPT-4o-mini got 37.78% of vision questions correct and 81.81% of written questions correct.
-
-Vision questions are harder because they typically require analyzing results from figures, whereas written answers are often directly found in the terminal output. Agents were sometimes unable to find the relevant figure if multiple output files are generated. Even once found, analyzing the output can be difficult, as past work as also shown (Xu et al., 2024; Majumdar et al., 2024).
-
-![Figure 9: Scatter plot of the cost vs accuracy of agents on the test set.](../figures/fig-9.png)
-
-> [!figure] chart
-> A scatter plot showing the accuracy of four agent models on CORE-Bench-Hard tasks as a function of cost in USD. Each point represents a model's performance at a specific cost.
->
-> Cost (USD) | Accuracy
-> ---|---
-> 0 | 0.0 (AutoGPT with GPT-4o-mini)
-> 1 | 0.2 (CORE-Agent with GPT-4o-mini)
-> 3 | 0.2 (CORE-Agent with GPT-4o)
-> 3 | 0.1 (AutoGPT with GPT-4o)
-
-> [!warning]- Numbers not found in page text
-> 0, 0.0, 0.1, 0.2, 1, 3 — read from the image; check against the figure.
-
 ![Figure 10: Success rates of CORE-Agent with GPT-4o and GPT-4o-mini at varying cost limits on CORE-Bench-Hard tasks on the train set.](../figures/fig-10.png)
+
+![Figure 7: Scatter plot of the cost vs accuracy of agents on the test set.](../figures/fig-7.png) Figure 6: Scatter plot of the cost vs accuracy of agents on the test set. > [!figure] chart > A scatter plot showing the accuracy of four agent models on CORE-Bench-Easy tasks versus their cost in USD. Each point represents a model's performance at a specific cost. > > Cost (USD) | Accuracy > ---|--- > 0.0 | 0.1 (pink) > 0.0 | 0.45 (orange) > 0.6 | 0.35 (purple) > 0.6 | 0.6 (green) > [!warning]- Numbers not found in page text > 0.0, 0.1, 0.35, 0.45, 0.6 — read from the image; check against the figure.
 
 > [!figure] chart
 > The chart shows the success rate of CORE-Agent using GPT-4o and GPT-4o-mini on CORE-Bench-Hard tasks as the cost cutoff increases from $0 to $10. Both models show a success rate that plateaus around $2.50, with GPT-4o achieving a higher success rate than GPT-4o-mini for cost cutoffs above $2.50.
@@ -486,9 +377,55 @@ Vision questions are harder because they typically require analyzing results fro
 > [!warning]- Numbers not found in page text
 > 0, 0.00, 0.25, 2, 8 — read from the image; check against the figure.
 
-Figure 8: Performance of CORE-Agent using GPT-4o vs GPT-4o-mini on the test set by discipline and programming language. Error bars are one standard deviation calculated from three trials.
+![Figure 8: Scatter plot of the cost vs accuracy of agents on the test set.](../figures/fig-8.png)
+
+Figure 6: Scatter plot of the cost vs accuracy of agents on the test set.
+
+> [!figure] chart
+> A scatter plot showing accuracy versus cost (USD) for four agent models on CORE-Bench-Medium Tasks. The models are CORE-Agent with GPT-4o, CORE-Agent with GPT-4o-mini, AutoGPT with GPT-4o, and AutoGPT with GPT-4o-mini.
+>
+> Cost (USD) | Accuracy
+> ---|---
+> 0.0 | 0.0 (AutoGPT with GPT-4o-mini)
+> 0.4 | 0.3 (CORE-Agent with GPT-4o-mini)
+> 1.0 | 0.6 (CORE-Agent with GPT-4o)
+> 1.2 | 0.4 (AutoGPT with GPT-4o)
+
+> [!warning]- Numbers not found in page text
+> 0.0, 0.3, 0.4, 0.6, 1.0, 1.2 — read from the image; check against the figure.
+
+Figure 7: Success rates of CORE-Agent with GPT-4o and GPT-4o-mini at varying cost limits on CORE-Bench-Hard tasks on the train set.
+
+![Figure 9: Scatter plot of the cost vs accuracy of agents on the test set.](../figures/fig-9.png)
+
+Figure 6: Scatter plot of the cost vs accuracy of agents on the test set.
+
+> [!figure] chart
+> A scatter plot showing the accuracy of four agent models on CORE-Bench-Hard tasks as a function of cost in USD. Each point represents a model's performance at a specific cost.
+>
+> Cost (USD) | Accuracy
+> ---|---
+> 0 | 0.0 (AutoGPT with GPT-4o-mini)
+> 1 | 0.2 (CORE-Agent with GPT-4o-mini)
+> 3 | 0.2 (CORE-Agent with GPT-4o)
+> 3 | 0.1 (AutoGPT with GPT-4o)
+
+> [!warning]- Numbers not found in page text
+> 0, 0.0, 0.1, 0.2, 1, 3 — read from the image; check against the figure.
+
+To evaluate the impact of our $4 cost limit on performance, we ran CORE-Agent on the CORE-Bench-Hard with a $10 cost limit on the train set. With the new limit, GPT-4o-mini performance remained unchanged, and GPT-4o's performance increased modestly from 26% to 31% (Figure 7). Note that GPT-4o-mini outperformed GPT-4o for lower cost limits under around $2.50.
+
+Increasing the cost limit did not greatly increase accuracy because when agents succeeded at tasks, they succeeded quickly (the average cost of successful tasks for CORE-Agent and GPT-4o was $0.54, compared to $2.59 for failed tasks) but when they failed at tasks, they often hit the cost limit and failed after not making progress. Even when increasing the cost limit, agents tended to remain stuck.
+
+## 4.4 Written questions are easier than vision questions
+
+Agents consistently performed better on text-based questions than vision-based questions. CORE-Agent with GPT-4o got 59.26% vision questions correct and 87.88% written questions correct on CORE-Bench-Easy on the test set. Similarly, CORE-Agent with GPT-4o-mini got 37.78% of vision questions correct and 81.81% of written questions correct.
+
+Vision questions are harder because they typically require analyzing results from figures, whereas written answers are often directly found in the terminal output. Agents were sometimes unable to find the relevant figure if multiple output files are generated. Even once found, analyzing the output can be difficult, as past work as also shown (Xu et al., 2024; Majumdar et al., 2024).
 
 ![Figure 11: Performance of CORE-Agent using GPT-4o vs GPT-4o-mini on the test set by discipline and programming language.](../figures/fig-11.png)
+
+Figure 8: Performance of CORE-Agent using GPT-4o vs GPT-4o-mini on the test set by discipline and programming language. Error bars are one standard deviation calculated from three trials.
 
 > [!figure] chart
 > Two bar charts showing the success rate of CORE-Agent using GPT-4o and GPT-4o-mini across different disciplines and programming languages. Error bars represent one standard deviation from three trials.
@@ -545,13 +482,11 @@ We thank Veniamin Veselovsky for discussions and inputs that informed our analys
 
 ## References
 
-[AISI. Inspect, 2024. URL https://inspect.ai-safety-institute.org.uk.](https://inspect.ai-safety-institute.org.uk/)
-
+- [AISI. Inspect, 2024. URL https://inspect.ai-safety-institute.org.uk.](https://inspect.ai-safety-institute.org.uk/)
 - Rose L. Andrew, Arianne Y.K. Albert, Sebastien Renaut, Diana J. Rennison, Dan G. Bock, and Tim Vines. Assessing the reproducibility of discriminant function analyses. PeerJ, 3:e1137, August 2015. ISSN 2167-8359. doi: 10.7717/peerj.1137. URL https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4540019/.
 - Anya Belz, Shubham Agarwal, Anastasia Shimorina, and Ehud Reiter. A Systematic Review of Reproducibility Research in Natural Language Processing. In Paola Merlo, Jorg Tiedemann, and Reut Tsarfaty (eds.), Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics: Main Volume, pp. 381-393, Online, April 2021. Association for Computational Linguistics. doi: 10.18653/ v1/2021.eacl-main.29. URL https://aclanthology.org/2021.eacl-main.29.
 - Stella Biderman, Hailey Schoelkopf, Lintang Sutawika, Leo Gao, Jonathan Tow, Baber Abbasi, Alham Fikri Aji, Pawan Sasanka Ammanamanchi, Sidney Black, Jordan Clive, Anthony DiPofi, Julen Etxaniz, Benjamin Fattori, Jessica Zosa Forde, Charles Foster, Mimansa Jaiswal, Wilson Y. Lee, Haonan Li, Charles Lovering, Niklas Muennighoff, Ellie Pavlick, Jason Phang, Aviya Skowron, Samson Tan, Xiangru Tang, Kevin A. Wang, Genta Indra Winata, François Yvon, and Andy Zou. Lessons from the Trenches on Reproducible Evaluation of Language Models, May 2024. URL http://arxiv.org/abs/2405.14782. arXiv:2405.14782 [cs].
 - Matteo Brivio and Çağrı Çöltekin. [Re] Exploring the Representation of Word Meanings in Context. ReScience C, 9(2):#5, July 2023. doi: 10.5281/zenodo.8173658. URL https://zenodo.org/records/8173658.
-
 - Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V. Le, Christopher Ré, and Azalia Mirhoseini. Large Language Monkeys: Scaling Inference Compute with Repeated Sampling, July 2024. URL http://arxiv.org/abs/2407.21787. arXiv:2407.21787 [cs].
 - Jonathan B. Buckheit and David L. Donoho. WaveLab and Reproducible Research. In Anestis Antoniadis and Georges Oppenheim (eds.), Wavelets and Statistics, pp. 55-81. Springer, New York, NY, 1995. ISBN 978-1-4612-2544-7. doi: 10.1007/978-1-4612-2544-7\_5. URL https://doi.org/10.1007/978-1-4612-2544-7\_ 5.
 - Federico Cassano, John Gouwar, Daniel Nguyen, Sydney Nguyen, Luna Phipps-Costin, Donald Pinckney, Ming-Ho Yee, Yangtian Zi, Carolyn Jane Anderson, Molly Q Feldman, Arjun Guha, Michael Greenberg, and Abhinav Jangda. MultiPL-E: A Scalable and Extensible Approach to Benchmarking Neural Code Generation, 2022. URL https://arxiv.org/abs/2208.08227. Version Number: 4.
@@ -562,7 +497,6 @@ We thank Veniamin Veselovsky for discussions and inputs that informed our analys
 - Paul Gertler, Sebastian Galiani, and Mauricio Romero. How to make replication the norm. Nature, 554(7693): 417-419, February 2018. doi: 10.1038/d41586-018-02108-9. URL https://www.nature.com/articles/ d41586-018-02108-9. Bandiera\_abtest: a Cg\_type: Comment Publisher: Nature Publishing Group Subject\_term: Research data, Research management, Publishing.
 - Kimberly J. Gilbert, Rose L. Andrew, Dan G. Bock, Michelle T. Franklin, Nolan C. Kane, Jean-Sébastien Moore, Brook T. Moyers, Sébastien Renaut, Diana J. Rennison, Thor Veen, and Timothy H. Vines. Recommendations for utilizing and reporting population genetic analyses: the reproducibility of genetic clustering using the program structure. Molecular Ecology, 21(20):4925-4930, 2012. ISSN 1365-294X. doi: 10.1111/j.1365-294X.2012.05754.x. URL https://onlinelibrary.wiley.com/doi/abs/ 10.1111/j.1365-294X.2012.05754.x. \_eprint: https://onlinelibrary.wiley.com/doi/pdf/10.1111/j.1365-294X.2012.05754.x.
 - Tom E. Hardwicke, Maya B. Mathur, Kyle MacDonald, Gustav Nilsonne, George C. Banks, Mallory C. Kidwell, Alicia Hofelich Mohr, Elizabeth Clayton, Erica J. Yoon, Michael Henry Tessler, Richie L. Lenne, Sara Altman, Bria Long, and Michael C. Frank. Data availability, reusability, and analytic reproducibility: evaluating the impact of a mandatory open data policy at the journal Cognition. Royal Society Open Science, 5(8):180448, August 2018. doi: 10.1098/rsos.180448. URL https://royalsocietypublishing. org/doi/10.1098/rsos.180448. Publisher: Royal Society.
-
 - Tom E. Hardwicke, Manuel Bohn, Kyle MacDonald, Emily Hembacher, Michèle B. Nuijten, Benjamin N. Peloquin, Benjamin E. deMayo, Bria Long, Erica J. Yoon, and Michael C. Frank. Analytic reproducibility in articles receiving open data badges at the journal Psychological Science : an observational study. Royal Society Open Science, 8(1):201494, January 2021. ISSN 2054-5703. doi: 10.1098/rsos.201494. URL https://royalsocietypublishing.org/doi/10.1098/rsos.201494.
 - Michael Hassid, Tal Remez, Jonas Gehring, Roy Schwartz, and Yossi Adi. The Larger the Better? Improved LLM Code-Generation via Budget Reallocation, July 2024. URL http://arxiv.org/abs/2404.00725. arXiv:2404.00725 [cs].
 - Yifeng He, Ethan Wang, Yuyang Rong, Zifei Cheng, and Hao Chen. Security of AI Agents, 2024. URL https://arxiv.org/abs/2406.08689. Version Number: 2.
@@ -576,7 +510,6 @@ We thank Veniamin Veselovsky for discussions and inputs that informed our analys
 - Yujia Li, David Choi, Junyoung Chung, Nate Kushman, Julian Schrittwieser, Rémi Leblond, Tom Eccles, James Keeling, Felix Gimeno, Agustin Dal Lago, Thomas Hubert, Peter Choy, Cyprien de Masson d'Autume, Igor Babuschkin, Xinyun Chen, Po-Sen Huang, Johannes Welbl, Sven Gowal, Alexey Cherepanov, James Molloy, Daniel J. Mankowitz, Esme Sutherland Robson, Pushmeet Kohli, Nando de Freitas, Koray Kavukcuoglu, and Oriol Vinyals. Competition-Level Code Generation with AlphaCode. Science, 378 (6624):1092-1097, December 2022. ISSN 0036-8075, 1095-9203. doi: 10.1126/science.abq1158. URL http://arxiv.org/abs/2203.07814. arXiv:2203.07814 [cs].
 - David M. Liu and Matthew J. Salganik. Successes and Struggles with Computational Reproducibility: Lessons from the Fragile Families Challenge. Socius, 5:2378023119849803, January 2019. ISSN 2378-0231. doi: 10.1177/2378023119849803. URL https://doi.org/10.1177/2378023119849803. Publisher: SAGE Publications.
 - Victor Livernoche and Vidya Sujaya. [Re] A Reproduction of Automatic Multi-Label Prompting: Simple and Interpretable Few-Shot Classification. ReScience C, 9(2):#33, July 2023. doi: 10.5281/zenodo.8173735. URL https://zenodo.org/records/8173735.
-
 - Chris Lu, Cong Lu, Robert Tjarko Lange, Jakob Foerster, Jeff Clune, and David Ha. The AI Scientist: Towards Fully Automated Open-Ended Scientific Discovery, August 2024. URL http://arxiv.org/abs/ 2408.06292. arXiv:2408.06292 [cs].
 - Arjun Majumdar, Anurag Ajay, Xiaohan Zhang, Pranav Putta, Sriram Yenamandra, Mikael Henaff, Sneha Silwal, Paul Mcvay, Oleksandr Maksymets, Sergio Arnaud, Karmesh Yadav, Qiyang Li, Ben Newman, Mohit Sharma, Vincent Berges, Shiqi Zhang, Pulkit Agrawal, Yonatan Bisk, Dhruv Batra, Mrinal Kalakrishnan, Franziska Meier, Chris Paxton, Alexander Sax, and Aravind Rajeswaran. OpenEQA: Embodied Question Answering in the Era of Foundation Models. pp. 16488-16498, 2024. URL https://openaccess.thecvf.com/content/CVPR2024/html/Majumdar\_OpenEQA\_Embodied\_ Question\_Answering\_in\_the\_Era\_of\_Foundation\_Models\_CVPR\_2024\_paper.html.
 - Bodhisattwa Prasad Majumder, Harshit Surana, Dhruv Agarwal, Bhavana Dalvi Mishra, Abhijeetsingh Meena, Aryan Prakhar, Tirth Vora, Tushar Khot, Ashish Sabharwal, and Peter Clark. DiscoveryBench: Towards Data-Driven Discovery with Large Language Models, July 2024. URL http://arxiv.org/abs/2407.01725. arXiv:2407.01725 [cs].
@@ -590,7 +523,6 @@ We thank Veniamin Veselovsky for discussions and inputs that informed our analys
 - Christophe Pérignon, Olivier Akmansoy, Christophe Hurlin, Anna Dreber, Felix Holzmeister, Juergen Huber, Magnus Johannesson, Michael Kirchler, Albert J. Menkveld, Michael Razen, and Utz Weitzel. Computational Reproducibility in Finance: Evidence from 1,000 Tests, February 2024. URL https: //papers.ssrn.com/abstract=4064172.
 - Edward Raff. A Step Toward Quantifying Independently Reproducible Machine Learning Research, September 2019. URL http://arxiv.org/abs/1909.06674. arXiv:1909.06674 [cs, stat].
 - Inioluwa Deborah Raji, Emily M. Bender, Amandalynne Paullada, Emily Denton, and Alex Hanna. AI and the Everything in the Whole Wide World Benchmark, 2021. URL https://arxiv.org/abs/2111.15366. Version Number: 1.
-
 - Sheeba Samuel and Daniel Mietchen. Computational reproducibility of Jupyter notebooks from biomedical publications. GigaScience, 13:giad113, January 2024. ISSN 2047-217X. doi: 10.1093/gigascience/giad113. URL https://doi.org/10.1093/gigascience/giad113.
 - Significant Gravitas. AutoGPT, September 2024. URL https://github.com/Significant-Gravitas/ AutoGPT. original-date: 2023-03-16T09:21:07Z.
 - Koustuv Sinha, Maurits Bleeker, Samarth Bhargav, Jessica Zosa Forde, Sharath Chandra Raparthy, Jesse Dodge, Joelle Pineau, and Robert Stojnic. ML Reproducibility Challenge 2022. ReScience C, 9(2):#46, July 2023. doi: 10.5281/zenodo.8200058. URL https://zenodo.org/records/8200058.
@@ -752,15 +684,21 @@ Figure A2: pass@k rate for CORE-Agent with GPT-4o and GPT-4o-mini on the test se
 ![Figure 15](../figures/fig-15.png)
 
 > [!figure] chart
-> A line chart showing the success rate of GPT-4o-mini across different Pass@k values (1, 2, 3) for three CORE-Bench task levels: Easy, Medium, and Hard. The success rate increases with higher Pass@k for all levels, with Easy having the highest rate and Hard the lowest.
+> A line chart showing the success rate of GPT-4o-mini across different Pass@k values (1, 2, 3) for three task levels: CORE-Bench-Easy, CORE-Bench-Medium, and CORE-Bench-Hard. The success rate increases with higher Pass@k for all task levels, with CORE-Bench-Easy having the highest success rate and CORE-Bench-Hard the lowest.
 >
-> Pass@k, CORE-Bench-Easy, CORE-Bench-Medium, CORE-Bench-Hard
-> 1, 0.45, 0.39, 0.17
-> 2, 0.52, 0.41, 0.22
-> 3, 0.57, 0.45, 0.25
+> Pass@k,Success Rate
+> 1,0.45
+> 2,0.52
+> 3,0.57
+> 1,0.39
+> 2,0.41
+> 3,0.45
+> 1,0.17
+> 2,0.21
+> 3,0.25
 
 > [!warning]- Numbers not found in page text
-> 0.17, 0.22, 0.25, 0.39, 0.41, 0.45, 0.52, 0.57 — read from the image; check against the figure.
+> 10, 17, 20, 21, 25, 30, 39, 41, 45, 52, 57 — read from the image; check against the figure.
 
 Pass^k Pass^k
 
@@ -891,142 +829,11 @@ This example shows how reproducing a paper can be a difficult task, even for a h
 Step 1: Executed 'read_file(filename='README.md')' and successfully identified dependencies and installation instructions for 'epidemic.py'. Step 2: Executed 'list_folder(folder='./')' and found: ['config.ini', 'LICENSE' , 'README.md', '.gitignore', '.DS_Store', 'code/config.ini', 'code/epidemic .py', 'code/LICENSE', 'code/gossip.ipynb', 'code/market_competition.ipynb', 'code/auxiliaries/model_real.png', 'code/auxiliaries/model_nd.png', 'code/ auxiliaries/florentine.mpx', 'code/auxiliaries/phase_3.png', 'code/ auxiliaries/phase_1.png', 'code/auxiliaries/phase_2.png', 'code/auxiliaries /general_model.png', 'efficiency_tests/tests.ipynb', 'efficiency_tests/ data_ndlib.csv', 'efficiency_tests/time_measurements.py', 'efficiency_tests /tested_functions.py', 'efficiency_tests/data_ndiff.csv', 'metadata/ metadata.yml']. Step 3: Executed 'read_file(filename='code/epidemic.py')' and successfully retrieved the content , including the import statements , configuration setup , propagation model initialization , and node state settings for a multispreading experiment. Step 4: Executed 'pip install -r requirements.txt' - Result: ERROR: Could not open requirements file: [Errno 2] No such file or directory: 'requirements. txt '
 ```
 
-Step 5: Executed ‘pip
-install
-networkx numpy ‘ and
-successfully
-installed
-networkx -3.3 (numpy was
-already
-satisfied).
-Step 6: Executed ‘execute_shell (command_line =’python3
-code/epidemic.py’)‘
-resulting in a ‘ModuleNotFoundError : No module
-named ’network_diffusion ’‘.
-Step 7: Read the ‘README.md ‘ file
-successfully , revealing
-instructions
-for
-using the ‘network_diffusion ‘ package , including
-setup via
-CodeOcean or a
-Python
-environment , and
-details on running
-various
-example
-files.
-Step 8: Executed ‘web_search(query=’python
-network_diffusion
-module
-installation ’)‘ and found the
-relevant
-module \"network -diffusion \" on PyPI
-: https :// pypi.org/project/network -diffusion /.
-Step 9: Executed ‘pip
-install
-network -diffusion ‘ resulting in the
-successful
-installation of ‘network -diffusion -0.14.4 ‘ and its dependencies , but noted
-a dependency
-conflict
-with ‘numpy ‘.
-Step 10:
-Executed ‘python3
-code/epidemic.py ‘ resulting in an ImportError:
-cannot
-import
-name ’MultiSpreading ’ from ’network_diffusion ’.
-Step 11:
-Executed ‘pip show network -diffusion ‘ and found
-that the module ‘
-network_diffusion ‘ is version
-0.14.4 ,
-authored by Micha\u0142
-Czuba and
-Piotr Br\u00f3dka , licensed
-under GNU GPL v3 , located at
-‘/root /. cache/
-pypoetry/virtualenvs/agpt -ttFEHEs8 -py3 .10/ lib/python3 .10/ site -packages ‘,
-and
-requires ‘dynetx ‘, ‘matplotlib ‘, ‘networkx ‘, ‘numpy ‘, ‘pandas ‘, ‘scipy
-‘, and ‘tqdm ‘.\n", "\n", "*
-Step 12:
-Executed ‘ls /root /. cache/pypoetry/virtualenvs/agpt -ttFEHEs8 -py3 .10/
-lib/python3 .10/ site -packages/network_diffusion ‘ and found
-files: ‘__init__.
-py ‘, ‘__pycache__ ‘, ‘logger.py ‘, ‘mln ‘, ‘models ‘, ‘seeding ‘, ‘simulator.py
-‘, ‘tests ‘, ‘tpn ‘, ‘utils.py ‘.
-Step 13:
-Executed ‘ls ‘ command on ’network_diffusion /models ’ directory ,
-successfully
-listing
-files: ‘__init__.py ‘, ‘__pycache__ ‘, ‘base_model.py ‘,
-‘dsaa_model.py ‘, ‘mic_model.py ‘, ‘mlt_model.py ‘, ‘tne_model.py ‘, and ‘utils
-‘.
-Step 14:
-Executed ‘grep ’class
-MultiSpreading ’‘ in the
-specified
-directory; no
-output was
-produced.
-Step 15:
-Executed ‘read_file(filename=’code/epidemic.py ’)‘ successfully
-and
-found the script
-initializes
-and
-performs a propagation
-experiment
-using
-the ‘MultiSpreading ‘ class.
-Step 16:
-Executed ‘jupyter
-nbconvert
---to notebook
---execute
-code/gossip.ipynb ‘
-with
-result: ‘/bin/sh: 1: jupyter: not found ‘.
-Step 17:
-Reviewed ‘README.md ‘ successfully ; detailed
-steps for
-running ’
-epidemic.py’ and
-installing
-dependencies
-were
-found.
-Step 18:
-Executed ‘pip
-install
-ipykernel tqdm ‘ successfully , installing
-packages: ipykernel -6.29.5 , comm -0.2.2 , debugpy -1.8.5 , ipython -8.26.0 ,
-jupyter -client -8.6.2 , jupyter -core -5.7.2 , matplotlib -inline -0.1.7 , nest -
-asyncio -1.6.0 , pyzmq -26.1.0 , tornado -6.4.1 , traitlets -5.14.3 , jedi -0.19.1 ,
-prompt -toolkit -3.0.47 , stack -data -0.6.3 , asttokens -2.4.1 , executing -2.0.1 ,
-pure -eval -0.2.3.
-Step 19:
-Executed ‘python3
-code/epidemic.py ‘ resulting in an ImportError:
-cannot
-import
-name ’MultiSpreading ’ from ’network_diffusion ’.
-Step 20:
-Executed ‘web_search(query=’ network_diffusion
-MultiSpreading
-class ’,
-num_results =1)‘ successfully; found a relevant
-URL: https :// network -
-diffusion.readthedocs.io/en/latest/ spreading_models .html.
-[...]
-D.3.4
-Attempting to look up the capsule on CodeOcean (CORE-Bench-Hard)
-Also in capsule-8807709, CORE-Agent with GPT-4o, after being unable to locate the requirements.txt file
-in the repository, attempted to look up the capsule on CodeOcean online. The agent ultimately did not
-succeed because JavaScript is required to render CodeOcean, which the agent did not have access to through
-27
+Step 5: Executed ‘pip install networkx numpy ‘ and successfully installed networkx -3.3 (numpy was already satisfied). Step 6: Executed ‘execute_shell (command_line =’python3 code/epidemic.py’)‘ resulting in a ‘ModuleNotFoundError : No module named ’network_diffusion ’‘. Step 7: Read the ‘README.md ‘ file successfully , revealing instructions for using the ‘network_diffusion ‘ package , including setup via CodeOcean or a Python environment , and details on running various example files. Step 8: Executed ‘web_search(query=’python network_diffusion module installation ’)‘ and found the relevant module \"network -diffusion \" on PyPI : https :// pypi.org/project/network -diffusion /. Step 9: Executed ‘pip install network -diffusion ‘ resulting in the successful installation of ‘network -diffusion -0.14.4 ‘ and its dependencies , but noted a dependency conflict with ‘numpy ‘. Step 10: Executed ‘python3 code/epidemic.py ‘ resulting in an ImportError: cannot import name ’MultiSpreading ’ from ’network_diffusion ’. Step 11: Executed ‘pip show network -diffusion ‘ and found that the module ‘ network_diffusion ‘ is version 0.14.4 , authored by Micha\u0142 Czuba and Piotr Br\u00f3dka , licensed under GNU GPL v3 , located at ‘/root /. cache/ pypoetry/virtualenvs/agpt -ttFEHEs8 -py3 .10/ lib/python3 .10/ site -packages ‘, and requires ‘dynetx ‘, ‘matplotlib ‘, ‘networkx ‘, ‘numpy ‘, ‘pandas ‘, ‘scipy ‘, and ‘tqdm ‘.\n", "\n", "* Step 12: Executed ‘ls /root /. cache/pypoetry/virtualenvs/agpt -ttFEHEs8 -py3 .10/ lib/python3 .10/ site -packages/network_diffusion ‘ and found files: ‘__init__. py ‘, ‘__pycache__ ‘, ‘logger.py ‘, ‘mln ‘, ‘models ‘, ‘seeding ‘, ‘simulator.py ‘, ‘tests ‘, ‘tpn ‘, ‘utils.py ‘. Step 13: Executed ‘ls ‘ command on ’network_diffusion /models ’ directory , successfully listing files: ‘__init__.py ‘, ‘__pycache__ ‘, ‘base_model.py ‘, ‘dsaa_model.py ‘, ‘mic_model.py ‘, ‘mlt_model.py ‘, ‘tne_model.py ‘, and ‘utils ‘. Step 14: Executed ‘grep ’class MultiSpreading ’‘ in the specified directory; no output was produced. Step 15: Executed ‘read_file(filename=’code/epidemic.py ’)‘ successfully and found the script initializes and performs a propagation experiment using the ‘MultiSpreading ‘ class. Step 16: Executed ‘jupyter nbconvert --to notebook --execute code/gossip.ipynb ‘ with result: ‘/bin/sh: 1: jupyter: not found ‘. Step 17: Reviewed ‘README.md ‘ successfully ; detailed steps for running ’ epidemic.py’ and installing dependencies were found. Step 18: Executed ‘pip install ipykernel tqdm ‘ successfully , installing packages: ipykernel -6.29.5 , comm -0.2.2 , debugpy -1.8.5 , ipython -8.26.0 , jupyter -client -8.6.2 , jupyter -core -5.7.2 , matplotlib -inline -0.1.7 , nest - asyncio -1.6.0 , pyzmq -26.1.0 , tornado -6.4.1 , traitlets -5.14.3 , jedi -0.19.1 , prompt -toolkit -3.0.47 , stack -data -0.6.3 , asttokens -2.4.1 , executing -2.0.1 , pure -eval -0.2.3. Step 19: Executed ‘python3 code/epidemic.py ‘ resulting in an ImportError: cannot import name ’MultiSpreading ’ from ’network_diffusion ’. Step 20: Executed ‘web_search(query=’ network_diffusion MultiSpreading class ’, num_results =1)‘ successfully; found a relevant URL: https :// network - diffusion.readthedocs.io/en/latest/ spreading_models .html. [...]
+
+## D.3.4 Attempting to look up the capsule on CodeOcean (CORE-Bench-Hard)
+
+Also in capsule-8807709, CORE-Agent with GPT-4o, after being unable to locate the requirements.txt file in the repository, attempted to look up the capsule on CodeOcean online. The agent ultimately did not succeed because JavaScript is required to render CodeOcean, which the agent did not have access to through
 
 its web browsing capabilities. However, this example highlights the care that agent developers must take during evaluation.
 
@@ -1065,8 +872,6 @@ We manually analyzed the papers from the 2022 Machine Learning Reproducibility C
 
 papers, many codebases contained errors, outdated packages, or limited documentation, requiring researchers to modify the codebase during the reproduction process.
 
-30
-
 ## Validation
 
 | page | route | attempt | status | failed checks |
@@ -1079,9 +884,7 @@ papers, many codebases contained errors, outdated packages, or limited documenta
 | 12 | docling | 1 | verified | figure_grounding |
 | 20 | docling | 1 | verified | figure_grounding |
 | 21 | docling | 1 | verified | figure_grounding |
-| 22 | docling | 1 | verified | numeric_agreement |
-| 23 | docling | 1 | verified | numeric_agreement |
-| 30 | vlm | 1 | verified | no_text_layer |
+| 30 | granite | 2 | verified | doctags_balance, no_text_layer |
 
 ## Document checks
 
@@ -1092,7 +895,7 @@ Evaluator-optimizer iterations: 2
 | identity | True | blocker | iter 1: venue (venue from record) / iter 2: draft matches arxiv |
 | ocr_pages | True | blocker | all pages verified |
 | code_links | True | info | https://github.com/siegelz/core-bench |
-| citations | False | warn | 25/54 checked references unresolved or mismatched (0.46) |
+| citations | False | warn | 24/54 checked references unresolved or mismatched (0.44) |
 
 ## References check
 
@@ -1115,7 +918,6 @@ Evaluator-optimizer iterations: 2
 | mismatch | 0.76 | exhausted | Bodhisattwa Prasad Majumder, Harshit Surana, Dhruv Agarwal, Bhavana Dalvi Mishra, Abhijeetsingh Meena, Aryan Prakhar, Ti | Large Language Models in Drug Discovery |
 | mismatch | 0.91 | exhausted | National Academies of Sciences Engineering and Medicine. Reproducibility and Replicability in Science. 2019. doi: 10.172 | A design specification for Critical Illness Digital Twins to cure sepsis: respon |
 | unresolved | 0.00 | exhausted | METR. Vivaria, 2024. URL https://vivaria.metr.org. | no strategy produced a verified match |
-| mismatch | 0.95 | exhausted | Christophe Pérignon, Olivier Akmansoy, Christophe Hurlin, Anna Dreber, Felix Holzmeister, Juergen Huber, Magnus Johannes | Computational Reproducibility in Finance: Evidence from 1,000 Tests |
 | mismatch | 0.73 | exhausted | Edward Raff. A Step Toward Quantifying Independently Reproducible Machine Learning Research, September 2019. URL http:// | Quantifying the Crisis in Reproducible Machine Learning. |
 | unresolved | 0.00 | exhausted | Inioluwa Deborah Raji, Emily M. Bender, Amandalynne Paullada, Emily Denton, and Alex Hanna. AI and the Everything in the | no strategy produced a verified match |
 | unresolved | 0.00 | exhausted | Significant Gravitas. AutoGPT, September 2024. URL https://github.com/Significant-Gravitas/ AutoGPT. original-date: 2023 | no strategy produced a verified match |

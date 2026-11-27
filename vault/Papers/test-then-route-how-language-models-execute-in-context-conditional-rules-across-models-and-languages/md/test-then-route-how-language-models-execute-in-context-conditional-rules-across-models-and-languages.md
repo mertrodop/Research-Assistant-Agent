@@ -2,25 +2,19 @@
 title: 'Test, then Route: How Language Models Execute In-Context Conditional Rules Across Models and Languages'
 source_pdf: Papers/test-then-route-how-language-models-execute-in-context-conditional-rules-across-models-and-languages/raw/test-then-route-how-language-models-execute-in-context-conditional-rules-across-models-and-languages.pdf
 pages: 18
-created_at: '2026-11-27T12:35:34+00:00'
+created_at: '2026-11-27T13:47:07+00:00'
 code:
 - https://github.com/Luxshan2000/icl-conditional-circuits
 authors:
 - Luxshan Thavarasa
 - Sivasuthan Sukumar
 year: '2026'
-venue: arXiv cs.CL
+venue: Findings of EACL 2027
 doi: 10.48550/arXiv.2608.04183
 arxiv_id: '2608.04183'
-citation_count: null
-abstract: ''
-token_usage:
-  google/gemini-2.5-flash:
-    calls: 1
-    prompt_tokens: 803
-    completion_tokens: 8
-    total_tokens: 811
-    cost: 0.000261
+citation_count: 0
+abstract: 'When a language model follows an in-context conditional rule such as "if P(x) then A else B," does it assemble a runtime circuit with one module that tests the predicate and another that routes the answer? We probe this with activation patching under a four-donor design whose two swapped-rule donors make the condition and the answer word disagree, so each layer reveals which of the two it carries. Across three open models from two families and six languages sharing one fixed item bank, a mid-stack residual band carries the predicate''s truth value: patching it reroutes the answer with predicate-outcome flip near 1.0 and mapping flip near 0.0, meeting a strict pre-specified isolation criterion in 17 of 18 cells, and the same localization holds across five predicate families. The router shows the opposite profile. A learned subspace flips A and B near-perfectly within the trained pair yet transfers to a new pair at approximately 0 in every model, while in Gemma-3-4B (the only model probed cross-lingually) it transfers at approximately 0.98 to the same pair in other languages. Under every probe we ran, the router direction is token-bound and non-transferable (largely answer-readout in Gemma, pair-specific in Qwen) rather than an abstract routing module. Test is modular; under these probes, route is not.'
+token_usage: {}
 sha256: 9cf8ad2518c13d381314abecde28655b3948631f06bc9327520dd2af29f7f7f2
 verified_pages: 18
 status: verified
@@ -116,10 +110,9 @@ Figure 1: The patching operation. The donor's last-token residual hℓ is copied
 > A diagram illustrating the activation patching operation, where the last-token residual from a donor run (query 3, FALSE) is copied into a base run (query 7, TRUE) at layer ℓ, causing the output to flip from "dog" to "cat".
 >
 > O-donor (query 3, FALSE) -> [layer boxes] -> "cat"
->                  v
->                  copy last-token residual h_ℓ
->                  v
->                  base (query 7, TRUE) -> [layer boxes] -> "dog" → "cat" (in teal box)
+>                  v (copy last-token residual h_ℓ)
+>
+>                  base (query 7, TRUE) -> [layer boxes] -> "dog" → "cat" (base run: same items, one digit changed)
 
 We report two metrics (Zhang and Nanda, 2024; Heimersheim and Nanda, 2024). The first is a twoway flip probability over {A, B}, gated by label mass: a patch counts as a flip only if the combined probability mass on {A, B} is at least 0.30, so destructive patches that collapse the distribution do not register as flips. The second is a graded fraction-of-swing recovery
 
@@ -470,20 +463,20 @@ Gemma-3-4B: multi-token answers
 Figure 7: Multi-token answers (Gemma-3-4B, English; sub-word pair and two-word-phrase pair pooled, sequence-margin metrics): per-layer flip for the O-DONOR (outcome), MAP-NULL (condition) and MAP-DONOR (answer) donors. The shaded band (same criterion as Figure 6) contains the single-token TEST band, with the same L22→L23 boundary.
 
 > [!figure] chart
-> A line chart showing flip metrics across layers for three categories: O-donor (outcome), map-null (condition), and map-donor (answer), with a highlighted TEST band and a labeled boundary at layer L18-L19.
+> A line chart showing flip metrics for three categories—O-donor (outcome), map-null (condition), and map-donor (answer)—across model layers. The chart highlights a TEST band around layer L18-L22 and a stage boundary at L22.
 >
 > | layer | O-donor (outcome) | map-null (condition) | map-donor (answer) |
 >  |---|---|---|---|
 >  | 0 | 0 | 0 | 0 |
 >  | 5 | 0 | 0 | 0 |
 >  | 10 | 0 | 0 | 0 |
->  | 15 | 0.5 | 0 | 0 |
+>  | 15 | 0.5 | 0.5 | 0 |
 >  | 20 | 1 | 1 | 1 |
->  | 25 | 1 | 0 | 1 |
->  | 30 | 1 | 0 | 1 |
+>  | 25 | 0 | 0 | 0 |
+>  | 30 | 0 | 0 | 0 |
 
 > [!warning]- Numbers not found in page text
-> 0, 0.5, 1, 15, 18, 19, 25, 30, 5 — read from the image; check against the figure.
+> 0, 0.5, 1, 15, 18, 25, 30, 5 — read from the image; check against the figure.
 
 Untested here, and required before these implications carry to production rules: native-script actions, compositional predicates, and free-form rather than constrained-choice completions (§4.3; Limitations).
 
@@ -501,6 +494,10 @@ Figure 8: IOI-contrast head map (Gemma-3-4B): IOI mover heads (black, sized by �
 
 > [!figure] chart
 > A scatter plot showing head activation values across layers, with a vertical band labeled 'TEST band L20-22' highlighted in amber. Black squares represent IOI mover heads, sized by Φ, and none fall within the TEST band. Teal circles represent ROUTE heads, with three overlapping with the IOI mover heads; these shared heads are circled in red.
+>
+> Layer | 0 | 10 | 20 | 30 | 33
+> ---|---|---|---|---|---
+> Value | 0 | 0 | 0 | 0 | 0
 >
 > Layer | 0 | 10 | 20 | 30 | 33
 > ---|---|---|---|---|---
@@ -550,15 +547,11 @@ Figure 10: Greedy head-group patching: fraction-ofswing Φ as heads are added in
 > [!figure] chart
 > A line chart showing the fraction-of-swing Φ as heads are added in greedy order for Qwen3-8B (L30-35). Two lines, one solid and one dotted, both start near 0 and increase, with the solid line slightly above the dotted line. A horizontal dotted line at Φ=0.58 is labeled 'full band 0.58'.
 >
-> |
-> |---
-> |heads patched (greedy order)|
-> |0|0
-> |2|0.1
-> |4|0.2
-> |6|0.3
-> |8|0.4
-> |10|0.5
+> | heads patched (greedy order) | 0 | 2 | 4 | 6 | 8 | 10 |
+>  |---|---|---|---|---|---|---|
+>  | Φ | 0 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 |
+>
+> Note: The chart has two lines (solid and dotted) that both increase from 0 to near 0.5, with the solid line slightly above the dotted line. A horizontal dotted line at Φ=0.58 is labeled 'full band 0.58'.
 
 > [!warning]- Numbers not found in page text
 > 0, 0.1, 0.2, 0.3, 0.4, 0.5, 6 — read from the image; check against the figure.
@@ -571,7 +564,7 @@ Table 4: Predicate generality (Gemma-3-4B, English). Every predicate family loca
 | $x > 5$ | numbers | 1.000 | L20 | 1.00 |
 | $x > 7$ | numbers | 0.979 | L29 | 1.00 |
 | $x \in \{2, 3, 5, 7\}$ | numbers | 0.979 | L20 | 1.00 |
-| vowel($x$) | letters | 0.854 | L22 | 1.00 |
+| vowel(x) | letters | 0.854 | L22 | 1.00 |
 
 readout onset (map-donor flip ≥ 0.9)
 
@@ -630,31 +623,18 @@ Figure 13: Predicate generality (Gemma-3-4B): per-layer O-DONOR flip for all fiv
 > [!figure] chart
 > Two line charts showing O-DONOR flip probability across layers for Gemma-3-4B and Qwen3-8B. The top chart displays five predicate families, each reaching 1.0 in the mid-stack band, with triangles marking TEST layers. The bottom chart is a spot-check for Qwen3-8B.
 >
-> |
-> |---
-> |layer
-> |flip probability
-> |0
-> |0.0
-> |10
-> |0.0
-> |20
-> |0.0
-> |30
-> |0.0
-> |layer
-> |flip probability
-> |0
-> |0.0
-> |10
-> |0.0
-> |20
-> |0.0
-> |30
-> |0.0
+> layer | 0 | 10 | 20 | 30
+> ---|---|---|---|---
+> Gemma-3-4B (34 layers): O-DONOR flip, five predicate families
+> flip probability | 0 | 0 | 0 | 0
+>
+> layer | 0 | 10 | 20 | 30
+> ---|---|---|---|---
+> Qwen3-8B (36 layers): spot-check
+> flip prob. | 0 | 0 | 0 | 0
 
 > [!warning]- Numbers not found in page text
-> 0, 0.0, 10, 20, 30 — read from the image; check against the figure.
+> 0, 10, 20, 30, 36 — read from the image; check against the figure.
 
 Verdict: entangled with readout; no separable, transferable router.
 

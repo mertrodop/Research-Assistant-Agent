@@ -2,7 +2,7 @@
 title: 'PaperBench: Evaluating AI’s Ability to Replicate AI Research'
 source_pdf: Papers/paperbench-evaluating-ais-ability-to-replicate-ai-research/raw/paperbench-evaluating-ais-ability-to-replicate-ai-research.pdf
 pages: 30
-created_at: '2026-11-27T12:31:58+00:00'
+created_at: '2026-11-27T13:42:20+00:00'
 code:
 - https://github.com/openai/preparedness
 - https://github.com/openai/preparedness/tree/main/project/nanoeval
@@ -24,7 +24,7 @@ year: '2025'
 venue: International Conference on Machine Learning
 doi: 10.48550/arXiv.2504.01848
 arxiv_id: '2504.01848'
-citation_count: 421
+citation_count: 546
 abstract: We introduce PaperBench, a benchmark evaluating the ability of AI agents to replicate state-of-the-art AI research. Agents must replicate 20 ICML 2024 Spotlight and Oral papers from scratch, including understanding paper contributions, developing a codebase, and successfully executing experiments. For objective evaluation, we develop rubrics that hierarchically decompose each replication task into smaller sub-tasks with clear grading criteria. In total, PaperBench contains 8,316 individually gradable tasks. Rubrics are co-developed with the author(s) of each ICML paper for accuracy and realism. To enable scalable evaluation, we also develop an LLM-based judge to automatically grade replication attempts against rubrics, and assess our judge's performance by creating a separate benchmark for judges. We evaluate several frontier models on PaperBench, finding that the best-performing tested agent, Claude 3.5 Sonnet (New) with open-source scaffolding, achieves an average replication score of 21.0%. Finally, we recruit top ML PhDs to attempt a subset of PaperBench, finding that models do not yet outperform the human baseline. We open-source our code (https://github.com/openai/preparedness) to facilitate future research in understanding the AI engineering capabilities of AI agents.
 token_usage: {}
 sha256: 2f58f1a6581af9d99432422dccf3cf61f5c263377c1e4550e7333c4a22d7184d
@@ -131,12 +131,21 @@ Importantly, we disallow agents from using or viewing paper authors' original co
 Figure 2. Rubrics hierarchically decompose the replication task into a tree of increasingly granular requirements. Leaf nodes are graded for binary pass/fail criteria, and a parent's score is the weighted average of its children. In the example above, the final Replication Score is 55%.
 
 > [!figure] diagram
-> A tree diagram illustrating a rubric's hierarchical structure for grading replication tasks, with leaf nodes marked as pass (blue) or fail (red), and internal nodes showing weighted averages of their children's scores, culminating in a final score of 0.55.
+> A tree diagram illustrating a rubric's hierarchical structure for grading replication tasks, with leaf nodes marked as pass (blue circle with '1') or fail (red circle with '0'), and internal nodes showing weighted averages of their children's scores, culminating in a final score of 0.55 at the root.
 >
-> The root node has a score of .55 and branches to two children: one with score .5 (weight 3) and one with score .4 (weight 2). The .5 node branches to two children: one with score .25 (weight 2) and one with score .5 (weight 1). The .25 node branches to two children: one with score 0 (red, weight 1) and one with score .75 (weight 2). The .75 node branches to two children: one with score 0 (red, weight 1) and one with score 1 (blue, weight 1). The .5 node branches to two children: one with score 1 (blue, weight 1) and one with score 0 (red, weight 1).
+> Root node: 0.55
+> ├── Left child: 0.5
+> │   ├── Left grandchild: 0.25
+> │   │   ├── Left great-grandchild: 0 (red circle)
+> │   │   └── Right great-grandchild: 1 (blue circle)
+> │   └── Right grandchild: 0.5
+> │       ├── Left great-grandchild: 1 (blue circle)
+> │       └── Right great-grandchild: 0 (red circle)
+> └── Right child: 0.4
+>     └── Child: 1 (blue circle)
 
 > [!warning]- Numbers not found in page text
-> 0.55, 25, 4, 5, 75 — read from the image; check against the figure.
+> 0.25, 0.4, 0.5, 0.55 — read from the image; check against the figure.
 
 ## 2.2. Reproduction
 
@@ -384,21 +393,21 @@ We see a significant uplift in scores from o1 and o3-mini with IterativeAgent. W
 Figure 3. Comparing human versus agent performance on a 4-paper subset of PaperBench. o1 initially outperforms the human baseline but plateaus after the first hour, leading it to fall behind the humans by the end. Note that the human attempt for test-time-model-adaptation ends at the 24 hour mark and is thus excluded from the '3-paper subset' discussed elsewhere in the paper. Error bars on model performance is SEM over 3 repeats.
 
 > [!figure] chart
-> The chart compares replication scores over work time (hours) for human and o1 agents under different conditions. Human performance generally increases and surpasses o1 after 12 hours, while o1's performance plateaus and then declines relative to humans.
+> The chart compares replication scores over work time (hours) for human participants and o1 agent variants under different conditions. Initially, o1 outperforms humans, but humans eventually surpass it, especially after 24 hours. The human 'test-time-model-adaptation' line ends at 24 hours and is excluded from the 3-paper subset analysis.
 >
-> | Work time (hours) | Human - all-in-one | o1 - all-in-one | Human - fre | o1 - fre | Human - stay-on-topic | o1 - stay-on-topic | Human - test-time-model-adaptation | o1 - test-time-model-adaptation |
+> | Work time (hours) | Human - all-in-one | Human - fre | Human - stay-on-topic | Human - test-time-model-adaptation | o1 - all-in-one | o1 - fre | o1 - stay-on-topic | o1 - test-time-model-adaptation |
 >  |---|---|---|---|---|---|---|---|---|
 >  | 0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
->  | 1 | 0.08 | 0.26 | 0.08 | 0.08 | 0.22 | 0.08 | 0.22 | 0.08 |
->  | 3 | 0.08 | 0.26 | 0.08 | 0.08 | 0.08 | 0.08 | 0.08 | 0.08 |
->  | 6 | 0.08 | 0.26 | 0.18 | 0.18 | 0.18 | 0.18 | 0.18 | 0.18 |
->  | 12 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 |
->  | 24 | 0.32 | 0.26 | 0.32 | 0.32 | 0.26 | 0.26 | 0.26 | 0.26 |
->  | 36 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 | 0.26 |
->  | 48 | 0.48 | 0.26 | 0.48 | 0.48 | 0.48 | 0.48 | 0.48 | 0.48 |
+>  | 1 | 0.25 | 0.08 | 0.22 | 0.0 | 0.25 | 0.08 | 0.22 | 0.0 |
+>  | 3 | 0.08 | 0.08 | 0.08 | 0.08 | 0.28 | 0.28 | 0.28 | 0.28 |
+>  | 6 | 0.08 | 0.18 | 0.12 | 0.12 | 0.28 | 0.28 | 0.28 | 0.28 |
+>  | 12 | 0.25 | 0.25 | 0.25 | 0.25 | 0.28 | 0.28 | 0.28 | 0.28 |
+>  | 24 | 0.3 | 0.3 | 0.3 | 0.3 | 0.25 | 0.25 | 0.25 | 0.25 |
+>  | 36 | 0.25 | 0.25 | 0.25 | 0.25 | 0.25 | 0.25 | 0.25 | 0.25 |
+>  | 48 | 0.5 | 0.4 | 0.4 | 0.4 | 0.25 | 0.25 | 0.25 | 0.25 |
 
 > [!warning]- Numbers not found in page text
-> 0, 0.0, 0.08, 0.18, 0.22, 0.26, 0.32, 0.48, 48 — read from the image; check against the figure.
+> 0, 0.0, 0.08, 0.12, 0.18, 0.22, 0.25, 0.28, 0.3, 0.4, 0.5, 48 — read from the image; check against the figure.
 
 performs o1 with BasicAgent but underperforms o1 with IterativeAgent. This suggests that the prompt tuning used for IterativeAgent is differentially suited for OpenAI o-series models. We suspect that a modification to BasicAgent that also prevents it from ending the task early could lead to Claude 3.5 Sonnet outperforming o1 with IterativeAgent.
 
@@ -696,15 +705,16 @@ Figure 5. Performance on JudgeEval vs average cost per paper in JudgeEval for va
 >
 > | Model Backend | Performance on JudgeEval [F1] | Average SimpleJudge Cost Per Paper [USD] |
 > |---|---|---|
-> | gpt-4o-mini | 0.6 | 10 |
-> | gpt-4o | 0.7 | 100 |
-> | o1-mini | 0.8 | 100 |
-> | o1 | 0.8 | 1000 |
-> | o3-mini | 0.8 | 100 |
+> | gpt-4o-mini | 0.59 | 10 |
+> | gpt-4o | 0.72 | 100 |
+> | o1-mini | 0.77 | 100 |
+> | o1 | 0.83 | 1000 |
+> | o3-mini | 0.82 | 100 |
 > | expert human | 1.0 | 1000 |
+> | random baseline | 0.5 | 10 |
 
 > [!warning]- Numbers not found in page text
-> 0.6, 0.7, 0.8, 1.0, 1000, 4 — read from the image; check against the figure.
+> 0.5, 0.59, 0.72, 0.77, 0.82, 0.83, 1.0, 1000, 4 — read from the image; check against the figure.
 
 In Fig. 5, we plot the average performance (F1) vs. cost ($USD per paper) for various model backends when using SimpleJudge on JudgeEval. We estimate model cost in terms of API usage cost (number of input/output tokens multiplied by the relevant cost-per-token based on public OpenAI o1 API pricing as of 2025/03/21)
 
@@ -1147,7 +1157,7 @@ You are a helpful agent attempting to solve a task. You have several functions a
 
 ![Figure 13: IterativeAgent Continue Message](../figures/fig-13.png)
 
-![Figure 12: IterativeAgent System Prompt](../figures/fig-12.png) ![Figure 11: BasicAgent System Prompt](../figures/fig-11.png) Figure 10. BasicAgent System Prompt > [!figure] other > The figure displays the system prompt for a BasicAgent, instructing it to replicate a scientific paper by using bash and python tools, performing actions step-by-step, and ensuring that all results from the paper can be reproduced by running reproduce.sh. > [!figure] other > The figure displays the system prompt for an IterativeAgent, which outlines its behavior and constraints for solving tasks. It emphasizes iterative, step-by-step execution, reasoning before actions, and building a complete codebase to replicate a paper's results. > > IterativeAgent System Prompt > You are a helpful agent attempting to solve a task. > - You have several functions available to help with solving the task. Each message may perform one function call. You will see the result of the function right after sending the message. If you need to perform multiple actions, you can always send more messages with subsequent function calls. > - Do some reasoning before your actions, describing what function calls you are going to use and how they fit into your plan. > - Use as much of the available time as possible to refine and optimize your solution: Your goal is to achieve the best possible score, not just to submit your first working solution. Keep working until the time limit expires. > - The file read tool is paginated, so you will need to call it multiple times to make sure that you have read all the relevant parts of the paper. > - This is a multi-step task. DO THINGS BIT BY BIT by slowly building up your solution with multiple tool calls, don't try to do everything in one go. Just reason about what is the best next step and execute it. Then take the next step after you receive the output of the previous step. > - You should try and create a clean codebase. When it makes sense you should edit/overwrite files rather than creating new ones. > - When writing code, do not write newlines as the string "\n", instead use the newline character.
+![Figure 12: IterativeAgent System Prompt](../figures/fig-12.png) ![Figure 11: BasicAgent System Prompt](../figures/fig-11.png) Figure 10. BasicAgent System Prompt > [!figure] other > The figure displays the system prompt for a BasicAgent, instructing it to replicate a scientific paper by using available bash and python tools, performing actions step-by-step, and ensuring that all results from the paper can be reproduced by running reproduce.sh. > [!figure] other > The figure displays the system prompt for an IterativeAgent, which outlines its behavior and constraints for solving tasks. It emphasizes iterative, step-by-step execution, reasoning before actions, and building a complete codebase to replicate a paper's results. > > IterativeAgent System Prompt > You are a helpful agent attempting to solve a task. > - You have several functions available to help with solving the task. Each message may perform one function call. You will see the result of the function right after sending the message. If you need to perform multiple actions, you can always send more messages with subsequent function calls. > - Do some reasoning before your actions, describing what function calls you are going to use and how they fit into your plan. > - Use as much of the available time as possible to refine and optimize your solution: Your goal is to achieve the best possible score, not just to submit your first working solution. Keep working until the time limit expires. > - The file read tool is paginated, so you will need to call it multiple times to make sure that you have read all the relevant parts of the paper. > - This is a multi-step task. DO THINGS BIT BY BIT by slowly building up your solution with multiple tool calls, don't try to do everything in one go. Just reason about what is the best next step and execute it. Then take the next step after you receive the output of the previous step. > - You should try and create a clean codebase. When it makes sense you should edit/overwrite files rather than creating new ones. > - When writing code, do not write newlines as the string "\n", instead use the newline character.
 
 > [!figure] other
 > The figure displays a message instructing the IterativeAgent to continue replicating a paper by taking the next logical step, using available tools, and prioritizing important parts of the paper.
