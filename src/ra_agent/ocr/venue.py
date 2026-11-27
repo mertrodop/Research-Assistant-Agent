@@ -1,8 +1,8 @@
 """Venue and DOI of the published version of a paper.
 
 arXiv's journal_ref is usually empty, so the draft ends up with "arXiv cs.CL" even for an
-ICLR paper. Semantic Scholar and OpenAlex know the published venue; the first record
-with one wins. Only when none has a venue does a web-searching model look it up, and its
+ICLR paper. OpenAlex knows the published venue, the abstract and the citation count: it is
+looked up by arXiv id when there is one, else by title. The first record with a venue wins. Only when none has a venue does a web-searching model look it up, and its
 answer counts only with a source URL taken from the search results.
 """
 
@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import time
 from pathlib import Path
 
 import httpx
@@ -22,8 +20,7 @@ from ..llm.client import VisionError
 from ..schema import PaperMeta
 
 OPENALEX_API = "https://api.openalex.org/works"
-S2_API = "https://api.semanticscholar.org/graph/v1/paper"
-S2_FIELDS = "title,year,venue,externalIds,abstract,citationCount"
+FIELDS = "title,publication_year,doi,cited_by_count,abstract_inverted_index,primary_location,locations"
 _PREPRINT = re.compile(r"^(arxiv|corr)\b", re.I)
 _JSON = re.compile(r"\{.*\}", re.S)
 
@@ -39,48 +36,42 @@ def _cached(cache: Path, produce):
 
 
 def _get(url: str, params: dict, timeout_s: float) -> dict | None:
-    """None on any failure: S2 answers 429 without a key (set S2_API_KEY) and now and then with one."""
-    headers = {"x-api-key": os.environ["S2_API_KEY"]} if "semanticscholar" in url and os.environ.get("S2_API_KEY") else {}
-    for attempt in range(2):  # one retry after 2 s: Semantic Scholar answers 429 now and then, even with a key
-        try:
-            response = httpx.get(url, params=params, headers=headers, timeout=timeout_s)
-            if response.status_code == 429 and attempt == 0:
-                time.sleep(2)
-                continue
-            response.raise_for_status()
-            return response.json()
-        except (httpx.HTTPError, json.JSONDecodeError):
-            return None
-    return None
+    """None on any failure: the lookup then simply finds nothing."""
+    try:
+        response = httpx.get(url, params=params, timeout=timeout_s)
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, json.JSONDecodeError):
+        return None
 
 
-def _s2_record(item: dict) -> dict:
+def _abstract(index: dict | None) -> str:
+    """OpenAlex stores the abstract as {word: [positions]}."""
+    words = sorted((pos, word) for word, positions in (index or {}).items() for pos in positions)
+    return " ".join(word for _, word in words)
+
+
+def _record(work: dict) -> dict:
+    names = [((loc or {}).get("source") or {}).get("display_name") or "" for loc in [work.get("primary_location")] + (work.get("locations") or [])]
+    venue = next((n for n in names if n and not _PREPRINT.match(n)), names[0] if names and names[0] else "")
     return {
-        "title": item.get("title") or "",
-        "venue": item.get("venue") or "",
-        "year": str(item.get("year") or ""),
-        "doi": (item.get("externalIds") or {}).get("DOI") or "",
-        "source": "semanticscholar",
-        "abstract": item.get("abstract") or "",
-        "citation_count": item.get("citationCount"),
+        "title": work.get("title") or "",
+        "venue": venue,
+        "year": str(work.get("publication_year") or ""),
+        "doi": re.sub(r"^https?://doi\.org/", "", work.get("doi") or ""),
+        "abstract": _abstract(work.get("abstract_inverted_index")),
+        "citation_count": work.get("cited_by_count"),
+        "source": "openalex",
     }
 
 
-def search_s2(meta: PaperMeta, cache_dir: Path, timeout_s: float) -> list[dict]:
-    if meta.arxiv_id:
-        url, params, key = f"{S2_API}/ARXIV:{meta.arxiv_id}", {"fields": S2_FIELDS}, f"s2-{meta.arxiv_id}"
-    else:
-        url, params = f"{S2_API}/search/match", {"query": meta.title, "fields": S2_FIELDS}
-        key = "s2-ti-" + hashlib.sha256(meta.title.encode()).hexdigest()[:16]
-
+def lookup_arxiv(arxiv_id: str, cache_dir: Path, timeout_s: float) -> list[dict]:
+    """The work with this arXiv id (its DataCite DOI), exact, no title matching."""
     def produce():
-        data = _get(url, params, timeout_s)
-        if data is None:
-            return None
-        items = data.get("data") if "data" in data else [data]
-        return [_s2_record(i) for i in items or [] if i.get("title")]
+        work = _get(f"{OPENALEX_API}/doi:10.48550/arXiv.{arxiv_id}", {"select": FIELDS}, timeout_s)
+        return None if work is None else [_record(work)]
 
-    return _cached(cache_dir / f"{key}.json", produce) or []
+    return _cached(cache_dir / f"openalex-arxiv-{arxiv_id}.json", produce) or []
 
 
 def search_openalex(title: str, cache_dir: Path, timeout_s: float) -> list[dict]:
@@ -89,32 +80,19 @@ def search_openalex(title: str, cache_dir: Path, timeout_s: float) -> list[dict]
         return []
 
     def produce():
-        params = {"search": phrase, "per-page": "3", "select": "title,publication_year,doi,primary_location"}
-        data = _get(OPENALEX_API, params, timeout_s)
-        if data is None:
-            return None
-        return [
-            {
-                "title": w.get("title") or "",
-                "venue": ((w.get("primary_location") or {}).get("source") or {}).get("display_name") or "",
-                "year": str(w.get("publication_year") or ""),
-                "doi": re.sub(r"^https?://doi\.org/", "", w.get("doi") or ""),
-                "source": "openalex",
-            }
-            for w in data.get("results", [])
-        ]
+        data = _get(OPENALEX_API, {"search": phrase, "per-page": "3", "select": FIELDS}, timeout_s)
+        return None if data is None else [_record(w) for w in data.get("results", [])]
 
     key = "openalex-" + hashlib.sha256(phrase.encode()).hexdigest()[:16]
     return _cached(cache_dir / f"{key}.json", produce) or []
 
 
 def candidates(meta: PaperMeta, cache_dir: str | Path, timeout_s: float, min_title: float) -> list[dict]:
-    """Records whose title matches the paper's title; each may carry a venue and a DOI."""
+    """OpenAlex records for the paper: by arXiv id when known, else the title matches."""
     cache = Path(cache_dir)
-    found = (
-        search_s2(meta, cache, timeout_s)
-        + search_openalex(meta.title, cache, timeout_s)
-    )
+    if meta.arxiv_id:
+        return lookup_arxiv(meta.arxiv_id, cache, timeout_s)
+    found = search_openalex(meta.title, cache, timeout_s)
     return [r for r in found if fuzz.token_set_ratio(meta.title.lower(), r["title"].lower()) / 100 >= min_title]
 
 
@@ -164,7 +142,6 @@ def refine(meta: PaperMeta, verifier, crossref, min_title: float) -> PaperMeta:
     if not meta.doi:
         dois = [c["doi"] for c in cands if c["doi"] and not c["doi"].lower().startswith("10.48550/")]
         update["doi"] = dois[0] if dois else (f"10.48550/arXiv.{meta.arxiv_id}" if meta.arxiv_id else "")
-    s2 = next((c for c in cands if c["source"] == "semanticscholar"), None)
-    if s2:  # Semantic Scholar only: the other sources do not carry these
-        update.update({k: s2[k] for k in ("abstract", "citation_count") if s2.get(k) not in (None, "")})
+    if cands:
+        update.update({k: cands[0][k] for k in ("abstract", "citation_count") if cands[0].get(k) not in (None, "")})
     return meta.model_copy(update=update)

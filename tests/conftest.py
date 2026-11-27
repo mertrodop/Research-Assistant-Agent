@@ -81,7 +81,7 @@ def ws(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_venue_network(monkeypatch):
-    """DBLP / Semantic Scholar lookups never leave the machine in unit tests."""
+    """OpenAlex lookups never leave the machine in unit tests."""
     from ra_agent.ocr import venue
 
     monkeypatch.setattr(venue, "_get", lambda *a, **k: None)

@@ -29,7 +29,7 @@ def rec(source, venue_="", doi=""):
 
 def test_record_venue_wins_and_the_web_model_is_not_called(monkeypatch, tmp_path):
     web = Web("", [])
-    out = run(monkeypatch, tmp_path, [rec("semanticscholar", "ICLR", "10.1/x"), rec("openalex", "CoRR")], web)
+    out = run(monkeypatch, tmp_path, [rec("openalex", "ICLR", "10.1/x"), rec("openalex", "CoRR")], web)
     assert (out.venue, out.doi, web.calls) == ("ICLR", "10.1/x", 0)
 
 
@@ -45,6 +45,6 @@ def test_web_answer_without_a_cited_source_is_dropped(monkeypatch, tmp_path):
 
 
 def test_semantic_scholar_fields_reach_the_meta(monkeypatch, tmp_path):
-    s2 = {**rec("semanticscholar", "ICLR", "10.1/x"), "abstract": "We show.", "citation_count": 7}
+    s2 = {**rec("openalex", "ICLR", "10.1/x"), "abstract": "We show.", "citation_count": 7}
     out = run(monkeypatch, tmp_path, [s2])
     assert (out.abstract, out.citation_count) == ("We show.", 7)
