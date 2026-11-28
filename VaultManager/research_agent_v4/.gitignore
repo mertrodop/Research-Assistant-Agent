@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+paper_parser_outputs/
+stage1_runs*/
+stage2_runs*/
+.DS_Store
